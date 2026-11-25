@@ -41,9 +41,20 @@ func New(ctx context.Context, addr, password string, db int) (*Client, error) {
 // Close releases the underlying pool.
 func (c *Client) Close() error { return c.rdb.Close() }
 
-// Key builds a namespaced key: prefix:part:part.
-func Key(prefix string, parts ...string) string {
-	k := prefix
+// NewFromURL connects using a redis:// connection URL.
+func NewFromURL(ctx context.Context, rawURL string) (*Client, error) {
+	opt, err := redis.ParseURL(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse redis url: %w", err)
+	}
+	return New(ctx, opt.Addr, opt.Password, opt.DB)
+}
+
+// Key builds an environment-namespaced key: if:env:prefix:part:part.
+// The "if:{env}:" root keeps development, test, and production state apart on a
+// shared Redis instance.
+func Key(env, prefix string, parts ...string) string {
+	k := "if:" + env + ":" + prefix
 	for _, p := range parts {
 		k += ":" + p
 	}

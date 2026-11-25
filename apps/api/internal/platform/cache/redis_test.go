@@ -24,7 +24,7 @@ func testClient(t *testing.T) *Client {
 func TestSetGetDelete(t *testing.T) {
 	c := testClient(t)
 	ctx := context.Background()
-	key := Key("test", "setget", "1")
+	key := Key("test", "test", "setget", "1")
 	t.Cleanup(func() { _ = c.Delete(ctx, key) })
 
 	if err := c.SetWithTTL(ctx, key, []byte("v"), 30*time.Second); err != nil {
@@ -44,7 +44,7 @@ func TestSetGetDelete(t *testing.T) {
 
 func TestSetWithTTLRejectsNonPositiveTTL(t *testing.T) {
 	c := testClient(t)
-	if err := c.SetWithTTL(context.Background(), Key("test", "bad"), []byte("v"), 0); err == nil {
+	if err := c.SetWithTTL(context.Background(), Key("test", "test", "bad"), []byte("v"), 0); err == nil {
 		t.Fatal("expected error for ttl=0")
 	}
 }
@@ -52,7 +52,7 @@ func TestSetWithTTLRejectsNonPositiveTTL(t *testing.T) {
 func TestKeyExpires(t *testing.T) {
 	c := testClient(t)
 	ctx := context.Background()
-	key := Key("test", "ttl", "1")
+	key := Key("test", "test", "ttl", "1")
 
 	if err := c.SetWithTTL(ctx, key, []byte("v"), 150*time.Millisecond); err != nil {
 		t.Fatalf("SetWithTTL: %v", err)
@@ -66,7 +66,7 @@ func TestKeyExpires(t *testing.T) {
 func TestIncrementWithTTLDoesNotSlide(t *testing.T) {
 	c := testClient(t)
 	ctx := context.Background()
-	key := Key("test", "counter", "1")
+	key := Key("test", "test", "counter", "1")
 	t.Cleanup(func() { _ = c.Delete(ctx, key) })
 
 	// The window opens with a short TTL.
@@ -90,7 +90,7 @@ func TestIncrementWithTTLDoesNotSlide(t *testing.T) {
 func TestAcquireLockIsExclusive(t *testing.T) {
 	c := testClient(t)
 	ctx := context.Background()
-	key := Key("test", "lock", "1")
+	key := Key("test", "test", "lock", "1")
 	t.Cleanup(func() { _ = c.Delete(ctx, key) })
 
 	got, err := c.AcquireLock(ctx, key, 30*time.Second)

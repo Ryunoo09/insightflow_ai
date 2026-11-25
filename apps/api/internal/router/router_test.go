@@ -10,7 +10,7 @@ import (
 )
 
 func TestHealthz(t *testing.T) {
-	handler := New(&config.Config{Env: "test"})
+	handler := New(&config.Config{Env: "test"}, Deps{})
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()

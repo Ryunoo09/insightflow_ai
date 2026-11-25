@@ -17,7 +17,7 @@ def _run(coro):
 def test_set_get_delete_with_ttl():
     async def scenario():
         client = CacheClient(os.environ["TEST_REDIS_URL"])
-        key = build_key("test", "engine-cache", "1")
+        key = build_key("test", "rc", "engine-cache", "1")
         try:
             await client.set_with_ttl(key, "v", 30)
             assert await client.get(key) == "v"
@@ -34,7 +34,7 @@ def test_set_with_ttl_rejects_non_positive():
         client = CacheClient(os.environ["TEST_REDIS_URL"])
         try:
             with pytest.raises(ValueError):
-                await client.set_with_ttl(build_key("test", "bad"), "v", 0)
+                await client.set_with_ttl(build_key("test", "rc", "bad"), "v", 0)
         finally:
             await client.close()
 

@@ -12,9 +12,13 @@ PREFIX_RESULT_CACHE = "rc"
 DEFAULT_RESULT_TTL_SECONDS = 24 * 60 * 60
 
 
-def build_key(prefix: str, *parts: str) -> str:
-    """Build a namespaced key: prefix:part:part."""
-    return ":".join((prefix, *parts))
+def build_key(env: str, prefix: str, *parts: str) -> str:
+    """Build an environment-namespaced key: if:env:prefix:part:part.
+
+    The ``if:{env}:`` root keeps development, test, and production state apart
+    on a shared Redis instance.
+    """
+    return ":".join(("if", env, prefix, *parts))
 
 
 class CacheClient:
