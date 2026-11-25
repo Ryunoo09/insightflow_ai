@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Semantic design tokens — source: docs/core_docs/Design.md Section 4.1 */
+@layer base {
+  :root {
+    --background: #ffffff;
+    --surface: #f8fafc;
+    --surface-raised: #ffffff;
+    --border: #e2e8f0;
+    --foreground: #0f172a;
+    --muted-foreground: #475569;
+    --primary: #4f46e5;
+    --primary-foreground: #ffffff;
+    --success: #15803d;
+    --warning: #b45309;
+    --danger: #b91c1c;
+    --info: #0369a1;
+    --ring: #4f46e5;
+  }
+
+  .dark {
+    --background: #0b0f14;
+    --surface: #111827;
+    --surface-raised: #1a2332;
+    --border: #273244;
+    --foreground: #e6eaf0;
+    --muted-foreground: #9aa6b8;
+    --primary: #818cf8;
+    --primary-foreground: #0b0f14;
+    --success: #4ade80;
+    --warning: #fbbf24;
+    --danger: #f87171;
+    --info: #38bdf8;
+    --ring: #818cf8;
+  }
+
+  * {
+    border-color: var(--border);
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}

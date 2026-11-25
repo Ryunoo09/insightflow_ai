@@ -1,0 +1,31 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Runtime storage (datasets, parquet, temp)
+storage/
+docs/
+# Go
+apps/api/bin/
+apps/api/*.exe
+
+# Python
+apps/engine/.venv/
+apps/engine/**/__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Node / Vite
+apps/web/node_modules/
+apps/web/dist/
+
+# Tooling / generated
+graphify-out/
+.graphify-out/
+.DS_Store
+
+# Documentation (excluded from published repository by request)
+docs/
