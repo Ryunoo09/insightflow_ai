@@ -7,35 +7,40 @@ import { useAuthStore } from "./store";
 
 /** Blocks its children until a session is present, bootstrapping via refresh. */
 export function RequireAuth({ children }: { children: ReactNode }) {
-  const accessToken = useAuthStore((s) => s.accessToken);
   const setUser = useAuthStore((s) => s.setUser);
   const clear = useAuthStore((s) => s.clear);
-  const [status, setStatus] = useState<"loading" | "ready" | "denied">(
-    accessToken ? "ready" : "loading",
+  const [status, setStatus] = useState<"loading" | "ready" | "denied">(() =>
+    useAuthStore.getState().accessToken ? "ready" : "loading",
   );
 
+  // Depends only on the stable store actions: refreshSession() sets the access
+  // token, so keying the effect on it would cancel the in-flight bootstrap and
+  // leave the screen stuck on "loading".
   useEffect(() => {
-    if (accessToken) return;
-    let alive = true;
+    if (useAuthStore.getState().accessToken) {
+      setStatus("ready");
+      return;
+    }
+    let cancelled = false;
     void (async () => {
       const refreshed = await refreshSession();
-      if (!alive) return;
+      if (cancelled) return;
       if (!refreshed) {
         setStatus("denied");
         return;
       }
       try {
         setUser(await authApi.me());
-        setStatus("ready");
+        if (!cancelled) setStatus("ready");
       } catch {
         clear();
-        setStatus("denied");
+        if (!cancelled) setStatus("denied");
       }
     })();
     return () => {
-      alive = false;
+      cancelled = true;
     };
-  }, [accessToken, setUser, clear]);
+  }, [setUser, clear]);
 
   if (status === "loading") {
     return <p className="p-8 text-center text-sm text-muted-foreground">Memuat…</p>;
