@@ -29,6 +29,7 @@ Memvalidasi fungsionalitas keseluruhan aplikasi InsightFlow AI secara komprehens
   - Uji upload file CSV tepat 50 MB dan file XLSX tepat 20 MB.
   - Verifikasi batasan memori DuckDB (tetap di bawah 1 GB RAM saat profiling dataset besar).
   - Verifikasi timeout eksekusi query (timeout 5 detik pada explorer, timeout 30 detik pada analitik).
+  - Verifikasi sinyal bangun worker job (Plan 10): upload ke worker idle diproses < 200 ms, dan dengan Redis dimatikan job tetap diproses ≤ 2 detik lewat polling tanpa upload gagal.
 - Audit Keamanan & Kepatuhan Monorepo:
   - Pemeriksaan kerentanan dependensi (`govulncheck` untuk Go, `pip-audit` untuk Python, `npm audit` untuk React).
   - Pemindaian kebocoran kredensial statis (verifikasi tidak ada hardcoded secret di seluruh codebase).
@@ -266,6 +267,7 @@ Menyusun template konfigurasi lingkungan produksi, prosedur migrasi database, da
   - Audit Web: `cd apps/web && npm audit`
   - Test E2E Penuh: `powershell -ExecutionPolicy Bypass -File scripts/run-e2e-tests.ps1`
   - Audit Baseline Keamanan: `powershell -ExecutionPolicy Bypass -File scripts/verify-security-baseline.ps1`
+  - Regresi sinyal job (Plan 10): `cd apps/api; go test ./internal/modules/datasets/... ./internal/modules/jobs/... ./internal/platform/cache/...` dengan `TEST_DATABASE_URL` dan `TEST_REDIS_ADDR` aktif, lalu ulangi dengan Redis dimatikan untuk memverifikasi fail-open.
 
 ---
 

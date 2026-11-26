@@ -41,7 +41,7 @@ Pendekatan yang digunakan adalah **Phase-Based & Domain-Driven Modular Developme
 1. **Foundation & Setup:** Menginisialisasi monorepo dengan tiga aplikasi (`apps/web`, `apps/api`, `apps/engine`) dan shared tooling.
 2. **Infrastructure & Persistence:** Membangun lapisan data transaksional (PostgreSQL + sqlc), cache/state (Redis), dan resolver penyimpanan lokal.
 3. **Identity & Security Boundary:** Membangun autentikasi aman (Argon2id, OTP HMAC Redis, Google OIDC PKCE) dan kontrol akses workspace sebelum modul bisnis dibangun.
-4. **Data Ingestion & Profiling:** Menangani upload streaming, antrean background job PostgreSQL, normalisasi Parquet, dan kalkulasi profil DuckDB.
+4. **Data Ingestion & Profiling:** Menangani upload streaming, antrean background job PostgreSQL, normalisasi Parquet, dan kalkulasi profil DuckDB. Sinyal bangun Redis best-effort ditambahkan sebagai optimasi terpisah pada Plan 10.
 5. **Data Explorer:** Menampilkan data mentah terpaginasi virtual melalui AG Grid dengan otorisasi ketat.
 6. **AI Analysis & Computation:** Membangun loop analisis terstruktur: schema context -> planner LLM -> validasi argumen -> komputasi DuckDB -> result envelope -> narrator LLM -> grounding checker -> SSE relay.
 7. **Visualization & Dashboards:** Merender chart Recharts dari `ChartSpec` tervalidasi dan grid dashboard 12 kolom yang dapat dihitung ulang.
@@ -64,6 +64,8 @@ Pendekatan yang digunakan adalah **Phase-Based & Domain-Driven Modular Developme
 | 07 | [`07-dashboards-visualizations.md`](07-dashboards-visualizations.md) | Recharts ChartRenderer, 12-col dashboard grid, widget re-run, saved results | P1 | Planned | Plan 06 |
 | 08 | [`08-governance-audit-hardening.md`](08-governance-audit-hardening.md) | Usage tracking, daily quota, audit logs, rate limiters, error sanitization | P1 | Planned | Plan 03, Plan 06 |
 | 09 | [`09-e2e-testing-production-readiness.md`](09-e2e-testing-production-readiness.md) | E2E journeys (Mailpit + fake LLM), benchmark dataset, deployment checklist | P1 | Planned | Plan 01-08 |
+| 10 | [`10-job-queue-wakeup-signal.md`](10-job-queue-wakeup-signal.md) | Redis wake-up signal for the PostgreSQL job worker (fail-open, additive to Plan 04) | P2 | Planned | Plan 02, Plan 04 |
+| 11 | [`11-dataset-management-hardening.md`](11-dataset-management-hardening.md) | Plan 04 debt: stale-job reaper, profile timeout, upload/concurrency tests, dataset rename/delete/purge, reprocess, list pagination, public config | P1 | Planned | Plan 04, Plan 10 |
 
 ---
 

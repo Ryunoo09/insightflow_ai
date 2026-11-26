@@ -59,7 +59,7 @@ Use `docs/core_docs/Design-system.md` as source for coding conventions and `docs
 - Never expose secrets, tokens, dataset contents, stack traces, or internal paths in logs or client errors.
 - Treat uploads, dataset content, prompts, LLM output, and tool arguments as untrusted. Validate type, size, schema, permissions, and bounds.
 - LLM must not calculate dataset metrics, execute arbitrary code, or issue free-form SQL. Use registered deterministic tools; validate plans, results, and grounding.
-- Keep Redis ephemeral with TTL; PostgreSQL/storage remain sources of truth. Follow fail-open/fail-closed behavior specified per operation.
+- Keep Redis ephemeral with TTL; PostgreSQL/storage remain sources of truth. Follow fail-open/fail-closed behavior specified per operation. The job wake-up signal (`if:{env}:jobs:wake`) is payload-free, TTL-bounded, and fail-open: `processing_jobs` stays the queue and polling remains the fallback.
 - Do not weaken security controls to make tests pass. Review access control, error paths, and secret exposure in security-sensitive changes.
 
 # 6. Useful Commands

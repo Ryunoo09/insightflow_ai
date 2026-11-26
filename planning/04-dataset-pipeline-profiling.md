@@ -169,6 +169,8 @@ Membangun background worker terpisah di Go API untuk mengambil job dari antrean 
 **Acceptance Criteria:**
 - Job berhasil diklaim secara berurutan, diproses, dan status diperbarui secara benar di PostgreSQL.
 
+**Addendum (Plan 10):** Antrean tetap `processing_jobs` + `FOR UPDATE SKIP LOCKED`; tidak ada perubahan skema, status, retry, atau kontrak API. Plan 10 menambahkan sinyal bangun Redis best-effort (`if:{env}:jobs:wake`, TTL pendek, tanpa payload) agar worker tidak menunggu interval polling saat idle. Jika Redis gagal, worker kembali ke polling (fail-open). Implementasi dan commit terpisah ada di [`10-job-queue-wakeup-signal.md`](10-job-queue-wakeup-signal.md).
+
 ---
 
 ### Task ID: TASK-404
@@ -247,6 +249,8 @@ Membangun modul kalkulasi profil statistik dataset secara otomatis menggunakan q
 
 **Acceptance Criteria:**
 - Profil statistik lengkap terbentuk dalam format JSON dan tersimpan di `dataset_profiles` PostgreSQL.
+
+**Addendum (Plan 11):** Utang Plan 04 yang belum dikerjakan dipindahkan ke [`11-dataset-management-hardening.md`](11-dataset-management-hardening.md): reaper job `processing` macet, timeout profiling 30 detik, test handler upload dan klaim konkuren, rename/soft delete/purge, reprocess versi baru, paginasi daftar dataset, serta `/config/limits`. Stress 50 MB CSV / 20 MB XLSX tetap dicakup Plan 09 TASK-902. Implementasi Plan 04 yang ada tidak berubah.
 
 ---
 
@@ -338,6 +342,7 @@ Memisahkan handler upload streaming, antrean worker Go, engine ingest Parquet, m
 
 ### 8.5 Commit Dependencies
 - Commit 02 bergantung pada 01. Commit 03 bergantung pada 02. Commit 04 dan 05 dieksekusi di engine. Commit 06 bergantung pada integrasi API.
+- Optimasi sinyal bangun Redis tidak termasuk Plan 04; commit-nya ada di Plan 10 dan tidak boleh mengubah query klaim job.
 
 ---
 
