@@ -12,12 +12,16 @@ import (
 
 	"insightflow/api/internal/config"
 	"insightflow/api/internal/modules/auth"
+	"insightflow/api/internal/modules/datasets"
+	"insightflow/api/internal/modules/jobs"
 	"insightflow/api/internal/modules/users"
 	"insightflow/api/internal/modules/workspaces"
 	"insightflow/api/internal/platform/cache"
 	"insightflow/api/internal/platform/database"
 	"insightflow/api/internal/platform/dbgen"
+	"insightflow/api/internal/platform/engineclient"
 	"insightflow/api/internal/platform/mailer"
+	"insightflow/api/internal/platform/storage"
 	"insightflow/api/internal/platform/token"
 	"insightflow/api/internal/router"
 )
@@ -104,9 +108,58 @@ func main() {
 
 	wsSvc := workspaces.NewService(workspaces.NewRepository(q), txm)
 
+	// The wake-up signal is an optimization only. When Redis is unavailable the
+	// worker keeps polling PostgreSQL, so uploads and jobs are unaffected.
+	const jobWorkers = 2
+	var notifier datasets.Notifier
+	var waiter jobs.Waiter
+	if cacheClient != nil {
+		wake, wakeErr := cache.NewWakeSignal(ctx, cfg.RedisURL, cfg.Env, jobWorkers)
+		if wakeErr != nil {
+			slog.Warn("job wake signal disabled; worker will poll", "error", wakeErr)
+		} else {
+			defer func() { _ = wake.Close() }()
+			notifier = wake
+			waiter = wake
+		}
+	}
+
+	resolver, err := storage.NewResolver(cfg.StorageRoot)
+	if err != nil {
+		slog.Error("storage resolver init failed", "error", err)
+		os.Exit(1)
+	}
+	datasetsSvc := datasets.NewService(
+		datasets.NewRepository(pool),
+		txm,
+		resolver,
+		datasets.Limits{
+			MaxDatasetsPerWorkspace: cfg.MaxDatasetsPerWorkspace,
+			MaxRowsCSV:              cfg.MaxDatasetRowsCSV,
+			MaxRowsXLSX:             cfg.MaxDatasetRowsXLSX,
+			MaxColumns:              cfg.MaxDatasetColumns,
+			PurgeGraceDays:          cfg.PurgeGraceDays,
+		},
+		notifier,
+	)
+
+	if cfg.EngineToken == "" {
+		slog.Warn("ENGINE_INTERNAL_TOKEN is empty; the engine will reject processing calls")
+	}
+	engine := engineclient.New(cfg.EngineURL, cfg.EngineToken, 300*time.Second)
+	jobPool := jobs.NewWorkerPool(
+		jobs.NewDispatcher(jobs.NewRepository(q), datasetsSvc, engine),
+		jobWorkers,
+		2*time.Second,
+		waiter,
+	)
+	reaper := jobs.NewReaper(jobs.NewRepository(q), datasetsSvc, cfg.JobStaleAfter, time.Minute)
+	purge := datasets.NewJanitor(datasets.NewRepository(pool), time.Hour)
+
 	handler := router.New(cfg, router.Deps{
 		Auth:       auth.NewHandler(cfg, authSvc, google),
 		Workspaces: workspaces.NewHandler(wsSvc),
+		Datasets:   datasets.NewHandler(datasetsSvc, cfg.MaxUploadCSVBytes, cfg.MaxUploadXLSXBytes),
 		Issuer:     issuer,
 		Users:      usersSvc,
 		Members:    wsSvc,
@@ -129,6 +182,11 @@ func main() {
 
 	stopCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	go jobPool.Run(stopCtx)
+	go reaper.Run(stopCtx)
+	go purge.Run(stopCtx)
+
 	<-stopCtx.Done()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

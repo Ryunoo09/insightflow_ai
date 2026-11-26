@@ -92,6 +92,8 @@ type Dataset struct {
 	CreatedBy        pgtype.UUID
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	DeletedAt        pgtype.Timestamptz
+	PurgeAfter       pgtype.Timestamptz
 }
 
 type DatasetColumn struct {
@@ -114,21 +116,24 @@ type DatasetProfile struct {
 }
 
 type DatasetVersion struct {
-	ID             pgtype.UUID
-	DatasetID      pgtype.UUID
-	VersionNo      int32
-	Status         string
-	FileFormat     string
-	OriginalName   string
-	RowCount       pgtype.Int8
-	ColumnCount    pgtype.Int4
-	ByteSize       pgtype.Int8
-	ChecksumSha256 pgtype.Text
-	SourcePath     string
-	ParquetPath    pgtype.Text
-	ErrorMessage   pgtype.Text
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
+	ID               pgtype.UUID
+	DatasetID        pgtype.UUID
+	VersionNo        int32
+	Status           string
+	FileFormat       string
+	OriginalName     string
+	RowCount         pgtype.Int8
+	ColumnCount      pgtype.Int4
+	ByteSize         pgtype.Int8
+	ChecksumSha256   pgtype.Text
+	SourcePath       string
+	ParquetPath      pgtype.Text
+	ErrorMessage     pgtype.Text
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	ErrorCode        pgtype.Text
+	ParquetSha256    pgtype.Text
+	ProcessingReport []byte
 }
 
 type ProcessingJob struct {
@@ -144,6 +149,7 @@ type ProcessingJob struct {
 	FinishedAt   pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+	RunAfter     pgtype.Timestamptz
 }
 
 type RefreshToken struct {
