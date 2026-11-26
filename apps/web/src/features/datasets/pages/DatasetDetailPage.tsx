@@ -82,6 +82,12 @@ export function DatasetDetailPage() {
           {reprocess.isPending ? "Memproses..." : "Proses ulang"}
         </Button>
         <Link
+          to={`/app/${workspaceId}/datasets/${datasetId}/explorer`}
+          className="text-sm font-medium text-primary hover:underline"
+        >
+          Data Explorer
+        </Link>
+        <Link
           to={`/app/${workspaceId}/datasets`}
           className="text-sm font-medium text-primary hover:underline"
         >

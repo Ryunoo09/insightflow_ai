@@ -52,3 +52,17 @@
     outline-offset: 2px;
   }
 }
+
+/* AG Grid theme mapped onto the semantic tokens (Design.md 4.1). */
+.ag-theme-quartz {
+  --ag-background-color: var(--background);
+  --ag-foreground-color: var(--foreground);
+  --ag-border-color: var(--border);
+  --ag-header-background-color: var(--surface);
+  --ag-header-foreground-color: var(--foreground);
+  --ag-odd-row-background-color: var(--surface);
+  --ag-row-hover-color: var(--surface);
+  --ag-selected-row-background-color: var(--surface);
+  --ag-font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --ag-font-size: 13px;
+}

@@ -43,6 +43,50 @@ export type DatasetListMeta = { page: number; per_page: number; total: number };
 
 export type DatasetList = { data: Dataset[]; meta: DatasetListMeta };
 
+/** One dataset version summary for the explorer version switcher. */
+export type DatasetVersionInfo = {
+  version_no: number;
+  status: string;
+  row_count?: number;
+  column_count?: number;
+  created_at: string;
+};
+
+export type ExplorerSort = { column: string; direction: "asc" | "desc" };
+
+export type ExplorerQuery = {
+  offset: number;
+  limit: number;
+  versionNo?: number;
+  sort?: ExplorerSort[];
+  search?: string;
+};
+
+export type ExplorerColumn = { name: string; type: string };
+
+export type ExplorerRows = {
+  columns: ExplorerColumn[];
+  rows: Record<string, unknown>[];
+  total: number;
+};
+
+/** Builds the explorer request body (URL/param shape stays server-owned). */
+export function buildRowsQuery(query: ExplorerQuery): Record<string, unknown> {
+  const body: Record<string, unknown> = { offset: query.offset, limit: query.limit };
+  if (query.versionNo) body.version_no = query.versionNo;
+  if (query.sort?.length) body.sort = query.sort;
+  if (query.search?.trim()) body.search = query.search.trim();
+  return body;
+}
+
+export function queryRows(datasetId: string, query: ExplorerQuery): Promise<ExplorerRows> {
+  return api<ExplorerRows>(`/datasets/${datasetId}/rows/query`, { method: "POST", body: buildRowsQuery(query) });
+}
+
+export function listVersions(datasetId: string): Promise<{ data: DatasetVersionInfo[] }> {
+  return api<{ data: DatasetVersionInfo[] }>(`/datasets/${datasetId}/versions`);
+}
+
 /** Public limits from GET /config/limits (no secrets). */
 export type Limits = {
   upload: { csv_max_bytes: number; xlsx_max_bytes: number };
@@ -100,6 +144,8 @@ export const datasetsApi = {
   remove: deleteDataset,
   reprocess: reprocessDataset,
   limits: fetchLimits,
+  versions: listVersions,
+  rows: queryRows,
 };
 
 /** Streams a file with XHR so upload progress can be reported. */

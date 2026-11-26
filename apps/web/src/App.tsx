@@ -5,6 +5,7 @@ import { LoginPage } from "./features/auth/pages/LoginPage";
 import { RegisterPage } from "./features/auth/pages/RegisterPage";
 import { VerifyOtpPage } from "./features/auth/pages/VerifyOtpPage";
 import { DatasetDetailPage } from "./features/datasets/pages/DatasetDetailPage";
+import { DatasetExplorerPage } from "./features/datasets/pages/DatasetExplorerPage";
 import { DatasetNewPage } from "./features/datasets/pages/DatasetNewPage";
 import { DatasetsPage } from "./features/datasets/pages/DatasetsPage";
 import { AppShell } from "./features/workspaces/components/AppShell";
@@ -29,6 +30,7 @@ const router = createBrowserRouter([
       { path: ":workspaceId/datasets", element: <DatasetsPage /> },
       { path: ":workspaceId/datasets/new", element: <DatasetNewPage /> },
       { path: ":workspaceId/datasets/:datasetId", element: <DatasetDetailPage /> },
+      { path: ":workspaceId/datasets/:datasetId/explorer", element: <DatasetExplorerPage /> },
     ],
   },
   { path: "*", element: <Navigate to="/app" replace /> },

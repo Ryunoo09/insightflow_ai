@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useMatch, useNavigate } from "react-router-dom";
 
 import { Button } from "../../../components/ui";
+import { cn } from "../../../lib/cn";
 import { authApi } from "../../auth/api";
 import { useAuthStore } from "../../auth/store";
 import { WorkspaceSelector } from "./WorkspaceSelector";
@@ -14,6 +15,7 @@ export function AppShell() {
   const clear = useAuthStore((s) => s.clear);
   const match = useMatch("/app/:workspaceId/*");
   const activeId = match?.params.workspaceId ?? null;
+  const explorer = useMatch("/app/:workspaceId/datasets/:datasetId/explorer");
 
   async function onLogout() {
     try {
@@ -55,7 +57,7 @@ export function AppShell() {
           </Button>
         </div>
       </header>
-      <main className="mx-auto w-full max-w-5xl p-6">
+      <main className={cn("mx-auto w-full p-6", explorer ? "max-w-none" : "max-w-5xl")}>
         <Outlet />
       </main>
     </div>
