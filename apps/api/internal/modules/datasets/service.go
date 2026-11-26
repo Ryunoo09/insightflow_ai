@@ -315,6 +315,46 @@ func (s *Service) Reprocess(ctx context.Context, datasetID, userID uuid.UUID) (D
 	return s.Get(ctx, datasetID, userID)
 }
 
+// ExplorerTarget is the dataset/version an explorer query runs against.
+type ExplorerTarget struct {
+	DatasetID   uuid.UUID
+	WorkspaceID uuid.UUID
+	VersionNo   int32
+}
+
+// ExplorerTarget resolves workspace access and the version to read. A zero
+// versionNo selects the dataset's current version.
+func (s *Service) ExplorerTarget(ctx context.Context, datasetID, userID uuid.UUID, versionNo int32) (ExplorerTarget, error) {
+	d, err := s.repo.GetSummary(ctx, datasetID, userID)
+	if err != nil {
+		return ExplorerTarget{}, err
+	}
+	want := d.CurrentVersionNo
+	if versionNo > 0 {
+		want = versionNo
+	}
+	v, err := s.repo.GetVersionByNo(ctx, datasetID, want)
+	if err != nil {
+		return ExplorerTarget{}, err
+	}
+	if v.Status != "ready" {
+		return ExplorerTarget{}, ErrNotReady
+	}
+	return ExplorerTarget{
+		DatasetID:   uuid.UUID(d.ID.Bytes),
+		WorkspaceID: uuid.UUID(d.WorkspaceID.Bytes),
+		VersionNo:   v.VersionNo,
+	}, nil
+}
+
+// Versions lists every version of a dataset the caller can access.
+func (s *Service) Versions(ctx context.Context, datasetID, userID uuid.UUID) ([]dbgen.DatasetVersion, error) {
+	if _, err := s.repo.GetSummary(ctx, datasetID, userID); err != nil {
+		return nil, err
+	}
+	return s.repo.ListVersions(ctx, datasetID)
+}
+
 // Get returns one dataset the caller can access.
 func (s *Service) Get(ctx context.Context, datasetID, userID uuid.UUID) (Dataset, error) {
 	r, err := s.repo.GetSummary(ctx, datasetID, userID)

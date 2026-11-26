@@ -66,6 +66,43 @@ type ProcessResponse struct {
 	ProcessingReport json.RawMessage `json:"processing_report"`
 }
 
+// QueryRowsRequest is the payload for POST /v1/datasets/rows/query (Plan 05).
+type QueryRowsRequest struct {
+	DatasetRef DatasetRef       `json:"dataset_ref"`
+	Offset     int              `json:"offset"`
+	Limit      int              `json:"limit"`
+	Sort       []ExplorerSort   `json:"sort,omitempty"`
+	Filters    []ExplorerFilter `json:"filters,omitempty"`
+	Search     string           `json:"search,omitempty"`
+}
+
+// ExplorerSort orders one explorer column.
+type ExplorerSort struct {
+	Column    string `json:"column"`
+	Direction string `json:"direction"`
+}
+
+// ExplorerFilter restricts one explorer column. Value stays opaque: the engine
+// validates the column and binds the value as a statement parameter.
+type ExplorerFilter struct {
+	Column   string `json:"column"`
+	Operator string `json:"operator"`
+	Value    any    `json:"value"`
+}
+
+// ExplorerColumn is one column of the parquet schema.
+type ExplorerColumn struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+// QueryRowsResponse is the engine explorer body.
+type QueryRowsResponse struct {
+	Columns []ExplorerColumn `json:"columns"`
+	Rows    []map[string]any `json:"rows"`
+	Total   int64            `json:"total"`
+}
+
 // Error is a structured engine failure. Retryable marks transient conditions
 // (engine down, timeout) that the job worker may retry.
 type Error struct {
@@ -112,14 +149,30 @@ type errorEnvelope struct {
 // Process runs one ingestion job on the engine.
 func (c *Client) Process(ctx context.Context, requestID string, req ProcessRequest) (ProcessResponse, error) {
 	var out ProcessResponse
+	if err := c.post(ctx, requestID, "/v1/datasets/process", req, &out); err != nil {
+		return ProcessResponse{}, err
+	}
+	return out, nil
+}
+
+// QueryRows runs one explorer page on the engine.
+func (c *Client) QueryRows(ctx context.Context, requestID string, req QueryRowsRequest) (QueryRowsResponse, error) {
+	var out QueryRowsResponse
+	if err := c.post(ctx, requestID, "/v1/datasets/rows/query", req, &out); err != nil {
+		return QueryRowsResponse{}, err
+	}
+	return out, nil
+}
+
+func (c *Client) post(ctx context.Context, requestID, path string, req, out any) error {
 	body, err := json.Marshal(req)
 	if err != nil {
-		return out, fmt.Errorf("engine: marshal request: %w", err)
+		return fmt.Errorf("engine: marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/datasets/process", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(body))
 	if err != nil {
-		return out, fmt.Errorf("engine: build request: %w", err)
+		return fmt.Errorf("engine: build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Internal-Token", c.token)
@@ -130,17 +183,17 @@ func (c *Client) Process(ctx context.Context, requestID string, req ProcessReque
 	res, err := c.http.Do(httpReq)
 	if err != nil {
 		// Transport failure or timeout: transient by definition.
-		return out, &Error{Code: "ENGINE_UNAVAILABLE", Message: "mesin pemrosesan tidak dapat dihubungi", Retryable: true}
+		return &Error{Code: "ENGINE_UNAVAILABLE", Message: "mesin pemrosesan tidak dapat dihubungi", Retryable: true}
 	}
 	defer func() { _ = res.Body.Close() }()
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return out, decodeError(res)
+		return decodeError(res)
 	}
-	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
-		return out, fmt.Errorf("engine: decode response: %w", err)
+	if err := json.NewDecoder(res.Body).Decode(out); err != nil {
+		return fmt.Errorf("engine: decode response: %w", err)
 	}
-	return out, nil
+	return nil
 }
 
 func decodeError(res *http.Response) error {

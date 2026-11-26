@@ -159,7 +159,7 @@ func main() {
 	handler := router.New(cfg, router.Deps{
 		Auth:       auth.NewHandler(cfg, authSvc, google),
 		Workspaces: workspaces.NewHandler(wsSvc),
-		Datasets:   datasets.NewHandler(datasetsSvc, cfg.MaxUploadCSVBytes, cfg.MaxUploadXLSXBytes),
+		Datasets:   datasets.NewHandler(datasetsSvc, engine, cfg.MaxUploadCSVBytes, cfg.MaxUploadXLSXBytes),
 		Issuer:     issuer,
 		Users:      usersSvc,
 		Members:    wsSvc,

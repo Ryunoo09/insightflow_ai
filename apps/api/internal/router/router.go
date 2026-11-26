@@ -65,6 +65,8 @@ func New(cfg *config.Config, deps Deps) http.Handler {
 	protected.GET("/workspaces/:workspace_id/datasets", middleware.WorkspaceMember(deps.Members), deps.Datasets.List)
 	protected.GET("/datasets/:dataset_id", deps.Datasets.Get)
 	protected.GET("/datasets/:dataset_id/status", deps.Datasets.Status)
+	protected.GET("/datasets/:dataset_id/versions", deps.Datasets.Versions)
+	protected.POST("/datasets/:dataset_id/rows/query", deps.Datasets.Explorer)
 	protected.PATCH("/datasets/:dataset_id", deps.Datasets.Rename)
 	protected.DELETE("/datasets/:dataset_id", deps.Datasets.Delete)
 	protected.POST("/datasets/:dataset_id/reprocess", deps.Datasets.Reprocess)

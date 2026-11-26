@@ -1,6 +1,7 @@
 package datasets
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -10,19 +11,27 @@ import (
 	"github.com/google/uuid"
 
 	"insightflow/api/internal/middleware"
+	"insightflow/api/internal/platform/engineclient"
 	"insightflow/api/internal/platform/httpx"
 )
 
 // Handler exposes the dataset HTTP endpoints.
 type Handler struct {
 	svc     *Service
+	engine  RowQuerier
 	maxCSV  int64
 	maxXLSX int64
 }
 
-// NewHandler builds the dataset handler. maxCSV and maxXLSX are hard upload caps.
-func NewHandler(svc *Service, maxCSV, maxXLSX int64) *Handler {
-	return &Handler{svc: svc, maxCSV: maxCSV, maxXLSX: maxXLSX}
+// RowQuerier forwards explorer queries to the internal engine.
+type RowQuerier interface {
+	QueryRows(ctx context.Context, requestID string, req engineclient.QueryRowsRequest) (engineclient.QueryRowsResponse, error)
+}
+
+// NewHandler builds the dataset handler. maxCSV and maxXLSX are hard upload
+// caps; engine may be nil when the explorer is not wired.
+func NewHandler(svc *Service, engine RowQuerier, maxCSV, maxXLSX int64) *Handler {
+	return &Handler{svc: svc, engine: engine, maxCSV: maxCSV, maxXLSX: maxXLSX}
 }
 
 // List handles GET /workspaces/:workspace_id/datasets with pagination, search,
@@ -264,6 +273,8 @@ func writeDatasetError(c *gin.Context, err error) {
 		httpx.WriteError(c, httpx.Err(http.StatusConflict, "DATASET_NAME_TAKEN", "Nama dataset sudah dipakai di ruang kerja ini."))
 	case errors.Is(err, ErrBusy):
 		httpx.WriteError(c, httpx.Err(http.StatusConflict, "DATASET_BUSY", "Dataset masih diproses. Coba lagi setelah selesai."))
+	case errors.Is(err, ErrNotReady):
+		httpx.WriteError(c, httpx.Err(http.StatusConflict, "DATASET_NOT_READY", "Dataset belum siap dieksplorasi."))
 	default:
 		httpx.WriteError(c, err)
 	}

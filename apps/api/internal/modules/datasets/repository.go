@@ -25,6 +25,9 @@ var ErrNameTaken = errors.New("datasets: name already taken in workspace")
 // ErrBusy maps to a 409 DATASET_BUSY: a version is still queued or processing.
 var ErrBusy = errors.New("datasets: a version is still processing")
 
+// ErrNotReady maps to a 409 DATASET_NOT_READY: the version is not readable yet.
+var ErrNotReady = errors.New("datasets: version is not ready")
+
 // ErrInvalidName maps to a 422 validation failure.
 var ErrInvalidName = errors.New("datasets: invalid name")
 
@@ -87,6 +90,21 @@ func (r *Repository) GetDataset(ctx context.Context, datasetID uuid.UUID) (dbgen
 		return dbgen.Dataset{}, err
 	}
 	return d, nil
+}
+
+// GetVersionByNo loads one version of a dataset.
+func (r *Repository) GetVersionByNo(ctx context.Context, datasetID uuid.UUID, versionNo int32) (dbgen.DatasetVersion, error) {
+	v, err := r.q.GetDatasetVersionByNo(ctx, dbgen.GetDatasetVersionByNoParams{
+		DatasetID: pgconv.UUID(datasetID),
+		VersionNo: versionNo,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return dbgen.DatasetVersion{}, ErrNotFound
+		}
+		return dbgen.DatasetVersion{}, err
+	}
+	return v, nil
 }
 
 // MemberRole returns the caller's role in a workspace, or ErrNotFound.

@@ -29,7 +29,7 @@ import (
 func uploadHarness(t *testing.T, maxCSV, maxXLSX int64) (*Handler, *Service, *dbgen.Queries, uuid.UUID, uuid.UUID, *gin.Engine) {
 	t.Helper()
 	svc, q, wsID, userID := testDeps(t)
-	h := NewHandler(svc, maxCSV, maxXLSX)
+	h := NewHandler(svc, nil, maxCSV, maxXLSX)
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -257,7 +257,7 @@ func TestRenameForbiddenForViewer(t *testing.T) {
 		t.Fatalf("add viewer: %v", err)
 	}
 
-	h := NewHandler(svc, 1<<20, 1<<20)
+	h := NewHandler(svc, nil, 1<<20, 1<<20)
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.PATCH("/datasets/:dataset_id", func(c *gin.Context) {
