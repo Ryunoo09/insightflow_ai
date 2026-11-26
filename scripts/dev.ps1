@@ -8,12 +8,12 @@ Write-Host "Starting InsightFlow AI dev environment..." -ForegroundColor Cyan
 
 Start-Process powershell -ArgumentList @(
     "-NoExit", "-Command",
-    "Set-Location '$root\apps\api'; `$env:APP_ENV='development'; go run ./cmd/api"
+    ". '$root\scripts\load-env.ps1'; Set-Location '$root\apps\api'; `$env:APP_ENV='development'; go run ./cmd/api"
 ) -WindowStyle Normal
 
 Start-Process powershell -ArgumentList @(
     "-NoExit", "-Command",
-    "Set-Location '$root\apps\engine'; if (Test-Path .venv\Scripts\Activate.ps1) { . .venv\Scripts\Activate.ps1 }; python -m app.main"
+    ". '$root\scripts\load-env.ps1'; Set-Location '$root\apps\engine'; if (Test-Path .venv\Scripts\Activate.ps1) { . .venv\Scripts\Activate.ps1 }; python -m app.main"
 ) -WindowStyle Normal
 
 Start-Process powershell -ArgumentList @(
