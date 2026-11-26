@@ -4,6 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Button, Card, FieldLabel, FormError, Input } from "../../../components/ui";
 import { ApiError } from "../../../lib/api";
 import { authApi } from "../api";
+import { PasswordStrength } from "../components/PasswordStrength";
 
 export function RegisterPage() {
   const navigate = useNavigate();
@@ -76,6 +77,7 @@ export function RegisterPage() {
             <p id="password-hint" className="mt-1 text-xs text-muted-foreground">
               10–128 karakter; hindari password umum.
             </p>
+            <PasswordStrength password={password} />
           </div>
 
           {error && <FormError id="register-error">{error}</FormError>}

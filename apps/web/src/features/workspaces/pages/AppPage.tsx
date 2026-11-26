@@ -4,33 +4,26 @@ import { useNavigate } from "react-router-dom";
 
 import { Badge, Button, Card, FieldLabel, FormError, Input } from "../../../components/ui";
 import { ApiError } from "../../../lib/api";
-import { authApi } from "../../auth/api";
-import { useAuthStore } from "../../auth/store";
-import { workspacesApi, type Workspace } from "../api";
-import { WorkspaceSelector } from "../components/WorkspaceSelector";
+import { workspacesApi } from "../api";
 
+/** Landing page for /app: pick an existing workspace or create a new one. */
 export function AppPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const user = useAuthStore((s) => s.user);
-  const clear = useAuthStore((s) => s.clear);
-
-  const [active, setActive] = useState<Workspace | null>(null);
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const { data: detail } = useQuery({
-    queryKey: ["workspace", active?.id],
-    queryFn: () => workspacesApi.get(active!.id),
-    enabled: active !== null,
+  const { data, isPending, isError } = useQuery({
+    queryKey: ["workspaces"],
+    queryFn: workspacesApi.list,
   });
 
   const createMutation = useMutation({
     mutationFn: workspacesApi.create,
     onSuccess: (ws) => {
       setName("");
-      setActive(ws);
       void queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+      navigate(`/app/${ws.id}/overview`);
     },
     onError: (err) => {
       setError(err instanceof ApiError ? err.message : "Gagal membuat ruang kerja.");
@@ -43,36 +36,40 @@ export function AppPage() {
     createMutation.mutate(name.trim());
   }
 
-  async function onLogout() {
-    try {
-      await authApi.logout(false);
-    } finally {
-      clear();
-      queryClient.clear();
-      navigate("/login", { replace: true });
-    }
-  }
+  const items = data?.data ?? [];
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-6 p-6">
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Ruang kerja</h1>
-          <p className="text-sm text-muted-foreground">{user?.email}</p>
-        </div>
-        <Button variant="ghost" onClick={onLogout}>
-          Keluar
-        </Button>
-      </header>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold">Pilih ruang kerja</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Ruang kerja memisahkan dataset dan analisis antar tim.
+        </p>
+      </div>
 
-      <Card className="space-y-4">
-        <WorkspaceSelector value={active?.id ?? null} onChange={setActive} />
-        {detail && (
-          <div className="flex items-center gap-3 text-sm">
-            <span className="font-medium text-foreground">{detail.name}</span>
-            <Badge>{detail.role}</Badge>
-            <span className="text-muted-foreground">/{detail.slug}</span>
-          </div>
+      <Card className="space-y-3">
+        <h2 className="text-lg font-semibold">Ruang kerja kamu</h2>
+        {isPending && <p className="text-sm text-muted-foreground">Memuat ruang kerja...</p>}
+        {isError && <p className="text-sm text-danger">Gagal memuat ruang kerja.</p>}
+        {!isPending && !isError && items.length === 0 && (
+          <p className="text-sm text-muted-foreground">Belum ada ruang kerja. Buat yang pertama di bawah.</p>
+        )}
+        {items.length > 0 && (
+          <ul className="divide-y divide-border">
+            {items.map((ws) => (
+              <li key={ws.id}>
+                <button
+                  type="button"
+                  onClick={() => navigate(`/app/${ws.id}/overview`)}
+                  className="flex w-full flex-wrap items-center gap-3 py-3 text-left hover:bg-surface"
+                >
+                  <span className="font-medium text-foreground">{ws.name}</span>
+                  <Badge>{ws.role}</Badge>
+                  <span className="text-sm text-muted-foreground">/{ws.slug}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
       </Card>
 
@@ -96,6 +93,6 @@ export function AppPage() {
           </Button>
         </form>
       </Card>
-    </main>
+    </div>
   );
 }

@@ -5,10 +5,12 @@ import { workspacesApi, type Workspace } from "../api";
 type Props = {
   value: string | null;
   onChange: (workspace: Workspace) => void;
+  /** Visible label text; null renders a screen-reader-only label (header use). */
+  label?: string | null;
 };
 
 /** Lists the caller's workspaces; picking one drives the active tenant. */
-export function WorkspaceSelector({ value, onChange }: Props) {
+export function WorkspaceSelector({ value, onChange, label = "Ruang kerja" }: Props) {
   const { data, isPending, isError } = useQuery({
     queryKey: ["workspaces"],
     queryFn: workspacesApi.list,
@@ -28,7 +30,9 @@ export function WorkspaceSelector({ value, onChange }: Props) {
 
   return (
     <label className="block text-sm">
-      <span className="mb-1 block font-medium text-foreground">Ruang kerja</span>
+      <span className={label === null ? "sr-only" : "mb-1 block font-medium text-foreground"}>
+        {label ?? "Ruang kerja"}
+      </span>
       <select
         className="min-h-10 w-full rounded-md border border-border bg-surface-raised px-3 text-sm text-foreground"
         value={value ?? ""}
