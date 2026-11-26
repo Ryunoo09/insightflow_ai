@@ -24,5 +24,8 @@ class Settings(BaseSettings):
     profile_threads: int = 2
     profile_timeout_seconds: int = 30
 
+    # Explorer query cap (Plan 05 / TASK-501): a slow scan is aborted.
+    explorer_timeout_seconds: int = 5
+
 
 settings = Settings()
