@@ -39,6 +39,16 @@ export function AppShell() {
               onChange={(ws) => navigate(`/app/${ws.id}/overview`)}
             />
           </div>
+          {activeId && (
+            <nav className="flex items-center gap-4 text-sm font-medium">
+              <Link to={`/app/${activeId}/overview`} className="text-muted-foreground hover:text-foreground">
+                Ikhtisar
+              </Link>
+              <Link to={`/app/${activeId}/datasets`} className="text-muted-foreground hover:text-foreground">
+                Dataset
+              </Link>
+            </nav>
+          )}
           <span className="text-sm text-muted-foreground">{user?.email}</span>
           <Button variant="ghost" onClick={onLogout}>
             Keluar
