@@ -4,14 +4,19 @@ package httpx
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 )
 
-// RequestIDKey is the gin context key holding the per-request identifier.
-const RequestIDKey = "request_id"
+// Gin context keys for request metadata. Only correlation and routing metadata
+// is ever logged; credentials, headers, query, and bodies never are.
+const (
+	RequestIDKey = "request_id"
+	ErrorCodeKey = "error_code"
+)
 
 // APIError is a safe, client-facing error. Internal details never leak because
 // callers construct these with a fixed code and a friendly message.
@@ -43,6 +48,13 @@ func RequestID(c *gin.Context) string {
 	return s
 }
 
+// ErrorCode returns the stable error code recorded for this request, if any.
+func ErrorCode(c *gin.Context) string {
+	v, _ := c.Get(ErrorCodeKey)
+	s, _ := v.(string)
+	return s
+}
+
 type errorEnvelope struct {
 	Error errorPayload `json:"error"`
 }
@@ -55,7 +67,8 @@ type errorPayload struct {
 }
 
 // WriteError maps err onto the standard envelope. Errors that are not APIError
-// become an opaque 500 so stack traces and driver messages never reach clients.
+// become an opaque 500 so stack traces and driver messages never reach clients;
+// the underlying error is logged server-side instead (redacted from the client).
 func WriteError(c *gin.Context, err error) {
 	apiErr := &APIError{
 		Status:  http.StatusInternalServerError,
@@ -65,7 +78,11 @@ func WriteError(c *gin.Context, err error) {
 	var mapped *APIError
 	if errors.As(err, &mapped) {
 		apiErr = mapped
+	} else {
+		// Unexpected failure: keep the detail in the log, never in the response.
+		slog.Error("unhandled error", "request_id", RequestID(c), "error", err)
 	}
+	c.Set(ErrorCodeKey, apiErr.Code)
 	c.AbortWithStatusJSON(apiErr.Status, errorEnvelope{Error: errorPayload{
 		Code:      apiErr.Code,
 		Message:   apiErr.Message,

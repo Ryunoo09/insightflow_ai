@@ -33,7 +33,7 @@ func New(cfg *config.Config, deps Deps) http.Handler {
 	// Trust no proxy headers by default: X-Forwarded-For is only honored once a
 	// trusted reverse proxy is configured explicitly.
 	_ = r.SetTrustedProxies(nil)
-	r.Use(gin.Recovery(), middleware.RequestID())
+	r.Use(gin.Recovery(), middleware.RequestID(), middleware.AccessLog())
 
 	r.GET("/healthz", healthz)
 
