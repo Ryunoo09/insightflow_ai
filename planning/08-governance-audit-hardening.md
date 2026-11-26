@@ -23,10 +23,12 @@ Membangun lapisan tata kelola (*governance*), pemantauan kuota pemakaian harian 
 - Audit Logging Terstruktur: pencatatan event penting (`auth.login`, `auth.failed`, `dataset.upload`, `dataset.delete`, `analysis.run`, `dashboard.delete`) ke tabel `audit_logs` di PostgreSQL memuat `user_id`, `workspace_id`, `action`, `resource_id`, payload detail `jsonb`, alamat IP teranonimisasi, dan user agent.
 - Sanitasi Error & Respon API Seragam: middleware error global di Go API dan exception handler di Python Engine yang memformat error ke payload JSON standar (`error: { code, message, request_id }`), menyembunyikan stack trace, pesan error internal database, dan path filesystem absolut.
 - Reduksi Log & Proteksi Secret: filter logger `log/slog` dan Uvicorn yang menyaring header `Authorization`, cookie refresh token, nilai password, data OTP, dan potongan data mentah pengguna dari log konsol.
+- Sink Log Terstruktur & Retensi: pengiriman log aplikasi ke stdout (default) atau berkas dengan rotasi berbasis ukuran serta penghapusan berkas yang melewati retensi 30 hari, agar log tidak tumbuh tanpa batas.
 
 **Out of Scope:**
 - Integrasi gateway pembayaran atau penagihan tagihan (*billing*) berbayar (Stripe/Midtrans - disiapkan untuk fase post-MVP).
 - Pengiriman log ke SIEM eksternal pihak ketiga (seperti Datadog atau Splunk).
+- Manajemen rotasi di tingkat infrastruktur (Docker `json-file`, journald, `logrotate`); dokumentasi opsi disediakan, penegakan dilakukan operator.
 - Antarmuka visual penampil audit log untuk pengguna reguler (audit log dikhususkan untuk investigasi teknis dan kepatuhan sistem internal).
 
 ### 1.3 Requirements Traceability
@@ -37,6 +39,7 @@ Membangun lapisan tata kelola (*governance*), pemantauan kuota pemakaian harian 
 | F-27 | Sanitasi error global & payload error seragam | Middleware error Go & platform httpx | PRD Bagian 35 |
 | SEC-RATE-LIMIT | Rate limiting terdistribusi berbasis Redis | Middleware rate limiter Go | Security.md Bagian 3.4 |
 | SEC-LOG-REDACT | Reduksi secret dan token dari log sistem | Slog handler filter custom | Security.md Bagian 4.4 |
+| SEC-LOG-RETENTION | Sink log dengan rotasi & retensi 30 hari agar tidak tumbuh tanpa batas | Konfigurasi log + sink rotasi Go/Engine | Security.md Bagian 4.4 & 5.3 |
 
 ---
 
@@ -50,6 +53,7 @@ Setiap request yang masuk ke Go API melewati rantai middleware keamanan:
 5. `QuotaMiddleware` (khusus rute analisis & upload): membaca penggunaan aktif di Redis. Jika kuota harian run habis (>= 50), tolak dengan kode `QUOTA_ANALYSIS_RUNS_EXCEEDED` (HTTP 403).
 6. Saat operasi selesai, `AuditLogger` menyisipkan catatan aktivitas ke PostgreSQL secara asinkron atau dalam transaksi bisnis terkait.
 7. Jika terjadi panic atau error runtime, `GlobalErrorMiddleware` menangkap exception, mencatat stack trace hanya di log internal dengan `X-Request-ID`, dan mengembalikan pesan yang aman dan ramah ke klien.
+8. Log aplikasi yang telah diredaksi dialirkan ke sink: stdout (default untuk container/log driver) atau berkas dengan rotasi ukuran dan retensi 30 hari.
 
 ---
 
@@ -228,6 +232,47 @@ Membangun middleware penanganan error global dan penyaring log sistem untuk mema
 
 ---
 
+### Task ID: TASK-805
+**Task Name:** Structured Log Sink with Rotation & Retention
+| Field | Description |
+|---|---|
+| Priority | P1 |
+| Complexity | Small |
+| Status | Planned |
+| Dependencies | PLAN-001, PLAN-008 |
+| Related Requirements | SEC-LOG-RETENTION |
+
+**Objective:**
+Mengarahkan log aplikasi (Go API dan Python Engine) ke sink terstruktur dengan rotasi berbasis ukuran dan retensi 30 hari, sehingga berkas log tidak tumbuh tanpa batas dan tetap dapat diinvestigasi sesuai kebijakan retensi.
+
+**Implementation Steps:**
+1. Tambahkan konfigurasi log pada `config.go`: `LOG_FORMAT` (`json`|`text`, default `json`), `LOG_LEVEL` (default `info`), `LOG_FILE` (opsional; kosong = stdout), `LOG_MAX_SIZE_MB` (default 50), `LOG_MAX_BACKUPS` (default 30), `LOG_RETENTION_DAYS` (default 30).
+2. Di `apps/api/internal/platform/logger`, buat `sink.go` yang membangun `slog.Handler`:
+   - Jika `LOG_FILE` kosong, tulis ke stdout (default; cocok untuk kontainer dan log driver).
+   - Jika diisi, gunakan rotasi berbasis ukuran dan hapus berkas yang lebih tua dari `LOG_RETENTION_DAYS`.
+3. Terapkan pola serupa di Python Engine (`apps/engine/app/core/logging.py`) memakai `RotatingFileHandler` dengan batas ukuran, jumlah backup, dan retensi 30 hari.
+4. Wiring pada `cmd/api/main.go` dan startup Engine; pastikan stdout tetap menjadi jalur default di development.
+5. Dokumentasikan opsi production: stdout + log driver (Docker `max-size`/`max-file`, journald) atau berkas dengan rotasi bila tanpa kontainer.
+
+**Expected Files:**
+- `apps/api/internal/platform/logger/sink.go`
+- `apps/engine/app/core/logging.py`
+- `apps/api/internal/config/config.go`
+- `apps/api/cmd/api/main.go`
+
+**Technical Requirements:**
+- Retensi default 30 hari sesuai Security.md; rotasi tidak boleh memblokir jalur request (buffer/async).
+- Log tidak boleh ditulis ke dalam direktori `storage/` yang menampung dataset.
+- Default tetap stdout; mengaktifkan berkas bersifat opt-in agar perilaku development tidak berubah.
+
+**Testing Requirements:**
+- Unit test: rotasi membuat berkas baru saat ukuran terlampaui, dan berkas yang melewati retensi terhapus.
+
+**Acceptance Criteria:**
+- Log tidak tumbuh tanpa batas, retensi 30 hari ditegakkan, dan mode default tetap stdout.
+
+---
+
 ## 4. API & Database Changes
 
 ### API Changes
@@ -267,6 +312,7 @@ Menggunakan tabel yang sudah disiapkan pada Plan 02:
   - Logika filter redaction slog pada Go API.
   - Skrip perhitungan sliding window rate limiter di Redis.
   - Format respon global error middleware.
+  - Rotasi berkas log dan penghapusan berkas melewati retensi 30 hari.
 - **Integration Tests:**
   - Skenario pembatasan rate limit auth (5 request gagal memicu HTTP 429).
   - Skenario habis kuota harian analisis (request ke-51 memicu HTTP 403).
@@ -274,14 +320,15 @@ Menggunakan tabel yang sudah disiapkan pada Plan 02:
 - **Verification Commands:**
   - `cd apps/api && go test -v ./internal/middleware/ratelimit/...`
   - `cd apps/api && go test -v ./internal/modules/governance/...`
-  - `cd apps/api && go test -v ./internal/platform/logger/...`
+    - `cd apps/api && go test -v ./internal/platform/logger/...`
+  - `cd apps/api && go test -v ./internal/platform/logger/... -run Rotation`
 
 ---
 
 ## 8. Commit Plan
 
 ### 8.1 Commit Strategy
-Memisahkan rate limiter terdistribusi -> usage tracking & kuota harian -> audit logger terstruktur -> sanitasi error & log redaction -> indikator kuota UI.
+Memisahkan rate limiter terdistribusi -> usage tracking & kuota harian -> audit logger terstruktur -> sanitasi error & log redaction -> indikator kuota UI -> sink log & retensi.
 
 ### 8.2 Commit Breakdown
 | Order | Related Tasks | Commit Type | Commit Scope | Commit Message |
@@ -291,6 +338,7 @@ Memisahkan rate limiter terdistribusi -> usage tracking & kuota harian -> audit 
 | 03 | TASK-803 | feat | audit | feat(audit): implement structured append-only audit trail logging |
 | 04 | TASK-804 | feat | platform | feat(platform): implement global error sanitization and log secret redaction |
 | 05 | TASK-801 | feat | web | feat(web): add daily usage quota indicator component in AppShell |
+| 06 | TASK-805 | feat | platform | feat(platform): add structured log sink with size rotation and 30-day retention |
 
 ### 8.3 Commit Details
 - **Commit 01:** Menyertakan middleware rate limiting Redis untuk auth, user, dan upload.
@@ -298,12 +346,13 @@ Memisahkan rate limiter terdistribusi -> usage tracking & kuota harian -> audit 
 - **Commit 03:** Menyertakan service audit logging asinkron dan pendaftaran event sensitif.
 - **Commit 04:** Menyertakan middleware recovery/error terpadu dan custom logger redactor di Go dan Engine.
 - **Commit 05:** Menyertakan komponen React UI penampil sisa kuota harian pada navigasi aplikasi.
+- **Commit 06:** Menyertakan konfigurasi log, sink rotasi Go dan Engine, serta retensi 30 hari.
 
 ### 8.4 Commit Boundaries
 - Middleware keamanan dasar (rate limit dan error recovery) harus terpasang sebelum rute governance dibuka.
 
 ### 8.5 Commit Dependencies
-- Commit 01 dan 02 bergantung pada Plan 02. Commit 05 bergantung pada 02.
+- Commit 01 dan 02 bergantung pada Plan 02. Commit 05 bergantung pada 02. Commit 06 bergantung pada 01 (konfigurasi) dan 04 (log sudah diredaksi sebelum di-sink).
 
 ---
 
@@ -313,6 +362,7 @@ Memisahkan rate limiter terdistribusi -> usage tracking & kuota harian -> audit 
 |---|---|---|---|
 | Akumulasi data tabel `audit_logs` dan `usage_records` membengkak seiring waktu | Pertumbuhan ukuran database PostgreSQL | Rendah | Siapkan strategi retensi data (partisi tabel bulanan atau retensi 90 hari pada fase post-MVP). |
 | Ketidaksesuaian waktu zona jam reset kuota harian | Pengguna bingung kapan kuota direset | Rendah | Tetapkan standar reset eksplisit pukul 00:00:00 UTC dan tampilkan waktu countdown lokal pada tooltip UI. |
+| Berkas log tumbuh tanpa batas bila diarahkan ke file tanpa rotasi | Disk penuh, layanan berhenti | Sedang | TASK-805 menyediakan rotasi ukuran + retensi 30 hari; default tetap stdout agar ditangani log driver. |
 
 ---
 
@@ -323,4 +373,5 @@ Memisahkan rate limiter terdistribusi -> usage tracking & kuota harian -> audit 
 - [ ] Catatan audit log append-only terbentuk pada seluruh event penting.
 - [ ] Error internal server terformat bersih tanpa membocorkan stack trace atau path file lokal.
 - [ ] Kredensial dan secret berhasil tersamar dari log konsol.
+- [ ] Log aplikasi memiliki rotasi dan retensi 30 hari sehingga tidak tumbuh tanpa batas.
 - [ ] Seluruh unit dan integration test governance lulus 100%.
