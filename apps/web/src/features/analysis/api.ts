@@ -21,6 +21,12 @@ export type AnalysisMessage = {
   role: "user" | "assistant" | "system";
   content: string;
   created_at: string;
+  // Present on assistant turns of completed runs, so reopening a session renders
+  // the same plan, chart, and evidence the live stream showed.
+  result?: ResultEnvelope;
+  chart?: ChartSpec;
+  plan?: AnalysisPlan;
+  narrative_grounded?: boolean;
 };
 
 export type ContextColumn = {

@@ -21,9 +21,25 @@ WHERE id = $1
 RETURNING *;
 
 -- name: InsertAnalysisResult :one
-INSERT INTO analysis_results (run_id, tool_name, result_json, chart_spec_json)
-VALUES ($1, $2, $3, $4)
+INSERT INTO analysis_results (run_id, tool_name, result_json, chart_spec_json, plan_json)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
+
+-- name: SetAnalysisRunAssistant :exec
+-- Links the run to the assistant message it produced, so history can find the
+-- result/chart/plan for that turn.
+UPDATE analysis_runs SET assistant_message_id = $2 WHERE id = $1;
+
+-- name: ListAnalysisSessionTurns :many
+-- Conversation turns with their run artifacts. A user message has no result; an
+-- assistant message carries the result, chart, and plan written by its run.
+SELECT m.id, m.role, m.content, m.created_at,
+       res.result_json, res.chart_spec_json, res.plan_json
+FROM analysis_messages m
+LEFT JOIN analysis_runs r ON r.assistant_message_id = m.id
+LEFT JOIN analysis_results res ON res.run_id = r.id
+WHERE m.session_id = $1
+ORDER BY m.created_at, m.id;
 
 -- name: GetAnalysisRun :one
 SELECT * FROM analysis_runs WHERE id = $1;

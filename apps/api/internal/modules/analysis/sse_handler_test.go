@@ -119,13 +119,15 @@ func TestRelayForwardsFramesAndPersistsRun(t *testing.T) {
 	svc, _, sessionID, userID, q := sseDeps(t)
 	analyzer := &fakeAnalyzer{frames: strings.Join([]string{
 		"event: stage_start\ndata: {\"stage\":\"planning\"}\n\n",
-		"event: run_completed\ndata: {\"result\":{\"tool\":\"aggregate_metric\"},\"narrative\":\"Total 60.\",\"chart\":{\"kind\":\"bar\"}}\n\n",
+		"event: plan_generated\ndata: {\"plan\":{\"tool\":\"aggregate_metric\",\"column\":\"amount\",\"aggregation\":\"sum\",\"intent\":\"total\"},\"repair_attempts\":1}\n\n",
+		"event: run_completed\ndata: {\"result\":{\"tool\":\"aggregate_metric\",\"columns\":[{\"name\":\"value\",\"type\":\"number\"}],\"rows\":[{\"value\":60}],\"row_count\":1},\"narrative\":\"Total 60.\",\"narrative_grounded\":true,\"chart\":{\"kind\":\"table\",\"title\":\"Hasil\",\"reason\":\"satu nilai\"},\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2},\"duration_ms\":5}\n\n",
 	}, "")}
 	h := NewHandlerWithEngine(svc, analyzer, nil, "test", nil)
 
 	router := gin.New()
 	router.Use(withPrincipal(userID))
 	router.POST("/analysis/sessions/:session_id/messages", h.SendMessage)
+	router.GET("/analysis/sessions/:session_id", h.Get)
 
 	body := `{"content":"total amount?"}`
 	req := httptest.NewRequest(http.MethodPost, "/analysis/sessions/"+sessionID.String()+"/messages", strings.NewReader(body))
@@ -160,6 +162,53 @@ func TestRelayForwardsFramesAndPersistsRun(t *testing.T) {
 	}
 	if runs[1].Role != "assistant" || runs[1].Content != "Total 60." {
 		t.Fatalf("assistant message = %+v", runs[1])
+	}
+
+	// History must return the assistant turn with its result, chart, and plan,
+	// otherwise reopening the session loses everything but the text.
+	getRec := httptest.NewRecorder()
+	router.ServeHTTP(getRec, httptest.NewRequest(http.MethodGet, "/analysis/sessions/"+sessionID.String(), nil))
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("get status = %d, body = %s", getRec.Code, getRec.Body.String())
+	}
+	var detail struct {
+		Messages []struct {
+			Role              string         `json:"role"`
+			Result            map[string]any `json:"result"`
+			Chart             map[string]any `json:"chart"`
+			Plan              map[string]any `json:"plan"`
+			NarrativeGrounded bool           `json:"narrative_grounded"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(getRec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode detail: %v", err)
+	}
+	var assistant *struct {
+		Role              string         `json:"role"`
+		Result            map[string]any `json:"result"`
+		Chart             map[string]any `json:"chart"`
+		Plan              map[string]any `json:"plan"`
+		NarrativeGrounded bool           `json:"narrative_grounded"`
+	}
+	for i := range detail.Messages {
+		if detail.Messages[i].Role == "assistant" {
+			assistant = &detail.Messages[i]
+		}
+	}
+	if assistant == nil {
+		t.Fatal("history has no assistant message")
+	}
+	if assistant.Result["tool"] != "aggregate_metric" {
+		t.Fatalf("history result = %+v", assistant.Result)
+	}
+	if assistant.Chart["kind"] != "table" {
+		t.Fatalf("history chart = %+v", assistant.Chart)
+	}
+	if assistant.Plan["tool"] != "aggregate_metric" {
+		t.Fatalf("history plan = %+v", assistant.Plan)
+	}
+	if !assistant.NarrativeGrounded {
+		t.Fatal("history lost the grounded flag")
 	}
 }
 

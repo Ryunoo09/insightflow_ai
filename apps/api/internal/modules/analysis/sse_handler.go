@@ -140,6 +140,7 @@ func finishRun(c *gin.Context, h *Handler, runID uuid.UUID, relay relayResult) {
 		ToolName:         relay.toolName,
 		ResultJSON:       relay.resultJSON,
 		ChartJSON:        relay.chartJSON,
+		PlanJSON:         relay.planJSON,
 		PromptTokens:     relay.promptTokens,
 		CompletionTokens: relay.completionTokens,
 	})

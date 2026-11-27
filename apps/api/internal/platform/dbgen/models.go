@@ -24,18 +24,20 @@ type AnalysisResult struct {
 	ResultJson    []byte
 	ChartSpecJson []byte
 	CreatedAt     pgtype.Timestamptz
+	PlanJson      []byte
 }
 
 type AnalysisRun struct {
-	ID               pgtype.UUID
-	SessionID        pgtype.UUID
-	MessageID        pgtype.UUID
-	Status           string
-	ErrorCode        pgtype.Text
-	PromptTokens     int32
-	CompletionTokens int32
-	StartedAt        pgtype.Timestamptz
-	FinishedAt       pgtype.Timestamptz
+	ID                 pgtype.UUID
+	SessionID          pgtype.UUID
+	MessageID          pgtype.UUID
+	Status             string
+	ErrorCode          pgtype.Text
+	PromptTokens       int32
+	CompletionTokens   int32
+	StartedAt          pgtype.Timestamptz
+	FinishedAt         pgtype.Timestamptz
+	AssistantMessageID pgtype.UUID
 }
 
 type AnalysisSession struct {

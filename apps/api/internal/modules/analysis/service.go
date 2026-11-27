@@ -28,12 +28,16 @@ type Session struct {
 	UpdatedAt   time.Time
 }
 
-// Message is one conversation turn.
+// Message is one conversation turn. Assistant turns may carry the run artifacts
+// so a reopened session renders the same chart, evidence, and plan.
 type Message struct {
-	ID        uuid.UUID
-	Role      string
-	Content   string
-	CreatedAt time.Time
+	ID         uuid.UUID
+	Role       string
+	Content    string
+	CreatedAt  time.Time
+	ResultJSON json.RawMessage
+	ChartJSON  json.RawMessage
+	PlanJSON   json.RawMessage
 }
 
 // SessionDetail is a session with its history and the compiled engine context.
@@ -67,6 +71,7 @@ type CompleteRunInput struct {
 	ToolName         string
 	ResultJSON       json.RawMessage
 	ChartJSON        json.RawMessage
+	PlanJSON         json.RawMessage
 	PromptTokens     int
 	CompletionTokens int
 }
@@ -157,11 +162,16 @@ func (s *Service) CompleteRun(ctx context.Context, in CompleteRunInput) error {
 	}
 	sessionID := uuid.UUID(run.SessionID.Bytes)
 	if assistantContent != "" {
-		if _, err := s.repo.CreateMessage(ctx, sessionID, "assistant", assistantContent, ""); err != nil {
+		message, err := s.repo.CreateMessage(ctx, sessionID, "assistant", assistantContent, "")
+		if err != nil {
+			return err
+		}
+		// Link the run to its assistant message so history can find the artifacts.
+		if err := s.repo.SetAssistantMessage(ctx, in.RunID, uuid.UUID(message.ID.Bytes)); err != nil {
 			return err
 		}
 	}
-	if err := s.repo.InsertResult(ctx, in.RunID, in.ToolName, in.ResultJSON, in.ChartJSON); err != nil {
+	if err := s.repo.InsertResult(ctx, in.RunID, in.ToolName, in.ResultJSON, in.ChartJSON, in.PlanJSON); err != nil {
 		return err
 	}
 	return s.repo.CompleteRun(ctx, in.RunID, in.PromptTokens, in.CompletionTokens)
@@ -232,6 +242,10 @@ func (s *Service) GetSession(ctx context.Context, sessionID, userID uuid.UUID) (
 	if err != nil {
 		return SessionDetail{}, err
 	}
+	turns, err := s.repo.Turns(ctx, sessionID)
+	if err != nil {
+		return SessionDetail{}, err
+	}
 	version, err := s.repo.AnalyzableVersion(ctx, uuid.UUID(row.DatasetID.Bytes), uuid.UUID(row.WorkspaceID.Bytes), userID)
 	if err != nil {
 		return SessionDetail{}, err
@@ -240,7 +254,7 @@ func (s *Service) GetSession(ctx context.Context, sessionID, userID uuid.UUID) (
 	if err != nil {
 		return SessionDetail{}, err
 	}
-	return SessionDetail{Session: toSession(row), Messages: toMessages(messages), Context: analysisCtx}, nil
+	return SessionDetail{Session: toSession(row), Messages: toTurns(turns), Context: analysisCtx}, nil
 }
 
 // buildContext loads column metadata and the profile for the session's current
@@ -280,14 +294,17 @@ func toSession(row dbgen.AnalysisSession) Session {
 	}
 }
 
-func toMessages(rows []dbgen.AnalysisMessage) []Message {
+func toTurns(rows []dbgen.ListAnalysisSessionTurnsRow) []Message {
 	out := make([]Message, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, Message{
-			ID:        uuid.UUID(row.ID.Bytes),
-			Role:      row.Role,
-			Content:   row.Content,
-			CreatedAt: row.CreatedAt.Time,
+			ID:         uuid.UUID(row.ID.Bytes),
+			Role:       row.Role,
+			Content:    row.Content,
+			CreatedAt:  row.CreatedAt.Time,
+			ResultJSON: row.ResultJson,
+			ChartJSON:  row.ChartSpecJson,
+			PlanJSON:   row.PlanJson,
 		})
 	}
 	return out

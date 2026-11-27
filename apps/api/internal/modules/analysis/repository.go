@@ -96,9 +96,15 @@ func (r *Repository) AnalyzableVersion(ctx context.Context, datasetID, workspace
 	return row, nil
 }
 
-// Messages returns a session's full history in chronological order.
+// Messages returns the session transcript without run artifacts.
 func (r *Repository) Messages(ctx context.Context, sessionID uuid.UUID) ([]dbgen.AnalysisMessage, error) {
 	return r.q.ListAnalysisMessages(ctx, pgconv.UUID(sessionID))
+}
+
+// Turns returns the transcript with the result/chart/plan attached to assistant
+// messages, so a reopened session renders the same answer.
+func (r *Repository) Turns(ctx context.Context, sessionID uuid.UUID) ([]dbgen.ListAnalysisSessionTurnsRow, error) {
+	return r.q.ListAnalysisSessionTurns(ctx, pgconv.UUID(sessionID))
 }
 
 // RecentMessages returns the newest limit messages, oldest-first.
@@ -179,13 +185,22 @@ func (r *Repository) FailRun(ctx context.Context, runID uuid.UUID, code string) 
 	return err
 }
 
-// InsertResult stores the tool output and chart spec for a run.
-func (r *Repository) InsertResult(ctx context.Context, runID uuid.UUID, toolName string, resultJSON, chartJSON []byte) error {
+// SetAssistantMessage links a run to the assistant message it produced.
+func (r *Repository) SetAssistantMessage(ctx context.Context, runID, messageID uuid.UUID) error {
+	return r.q.SetAnalysisRunAssistant(ctx, dbgen.SetAnalysisRunAssistantParams{
+		ID:                 pgconv.UUID(runID),
+		AssistantMessageID: pgconv.UUID(messageID),
+	})
+}
+
+// InsertResult stores the tool output, chart, and plan for a run.
+func (r *Repository) InsertResult(ctx context.Context, runID uuid.UUID, toolName string, resultJSON, chartJSON, planJSON []byte) error {
 	_, err := r.q.InsertAnalysisResult(ctx, dbgen.InsertAnalysisResultParams{
 		RunID:         pgconv.UUID(runID),
 		ToolName:      textOrNull(toolName),
 		ResultJson:    resultJSON,
 		ChartSpecJson: chartJSON,
+		PlanJson:      planJSON,
 	})
 	return err
 }

@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -118,12 +119,33 @@ func (h *Handler) Get(c *gin.Context) {
 	}
 	messages := make([]gin.H, 0, len(detail.Messages))
 	for _, m := range detail.Messages {
-		messages = append(messages, gin.H{
+		message := gin.H{
 			"id":         m.ID.String(),
 			"role":       m.Role,
 			"content":    m.Content,
 			"created_at": m.CreatedAt.UTC().Format(time.RFC3339),
-		})
+		}
+		// result_json stores the whole run_completed frame; expose the pieces the
+		// chat needs so history renders exactly like the live stream did.
+		if len(m.ResultJSON) > 0 {
+			var frame struct {
+				Result   json.RawMessage `json:"result"`
+				Grounded bool            `json:"narrative_grounded"`
+			}
+			if json.Unmarshal(m.ResultJSON, &frame) == nil && len(frame.Result) > 0 {
+				message["result"] = frame.Result
+				message["narrative_grounded"] = frame.Grounded
+			} else {
+				message["result"] = m.ResultJSON
+			}
+		}
+		if len(m.ChartJSON) > 0 {
+			message["chart"] = m.ChartJSON
+		}
+		if len(m.PlanJSON) > 0 {
+			message["plan"] = m.PlanJSON
+		}
+		messages = append(messages, message)
 	}
 	body := sessionBody(detail.Session)
 	body["messages"] = messages

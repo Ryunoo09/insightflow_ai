@@ -35,6 +35,10 @@ export function AnalysisPage() {
         id: message.id,
         role: message.role === "user" ? "user" : "assistant",
         content: message.content,
+        result: message.result,
+        chart: message.chart,
+        plan: message.plan,
+        grounded: message.narrative_grounded,
       })),
     );
   }, [data]);

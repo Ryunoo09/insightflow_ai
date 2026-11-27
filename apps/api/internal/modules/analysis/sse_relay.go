@@ -18,6 +18,7 @@ type relayResult struct {
 	toolName         string
 	resultJSON       json.RawMessage
 	chartJSON        json.RawMessage
+	planJSON         json.RawMessage
 	failureCode      string
 }
 
@@ -58,6 +59,13 @@ func relayStream(c *gin.Context, stream *engineclient.AnalyzeStream) relayResult
 // observe captures persisted fields from the terminal frames only.
 func (r *relayResult) observe(event string, data []byte) {
 	switch event {
+	case "plan_generated":
+		var payload struct {
+			Plan json.RawMessage `json:"plan"`
+		}
+		if json.Unmarshal(data, &payload) == nil {
+			r.planJSON = append(json.RawMessage(nil), payload.Plan...)
+		}
 	case "run_failed":
 		var payload struct {
 			Code string `json:"code"`

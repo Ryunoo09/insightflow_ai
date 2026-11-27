@@ -16,7 +16,7 @@ UPDATE analysis_runs
 SET status = 'completed', finished_at = now(),
     prompt_tokens = $2, completion_tokens = $3
 WHERE id = $1
-RETURNING id, session_id, message_id, status, error_code, prompt_tokens, completion_tokens, started_at, finished_at
+RETURNING id, session_id, message_id, status, error_code, prompt_tokens, completion_tokens, started_at, finished_at, assistant_message_id
 `
 
 type CompleteAnalysisRunParams struct {
@@ -38,6 +38,7 @@ func (q *Queries) CompleteAnalysisRun(ctx context.Context, arg CompleteAnalysisR
 		&i.CompletionTokens,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.AssistantMessageID,
 	)
 	return i, err
 }
@@ -46,7 +47,7 @@ const createAnalysisRun = `-- name: CreateAnalysisRun :one
 
 INSERT INTO analysis_runs (session_id, message_id, status)
 VALUES ($1, $2, 'running')
-RETURNING id, session_id, message_id, status, error_code, prompt_tokens, completion_tokens, started_at, finished_at
+RETURNING id, session_id, message_id, status, error_code, prompt_tokens, completion_tokens, started_at, finished_at, assistant_message_id
 `
 
 type CreateAnalysisRunParams struct {
@@ -70,6 +71,7 @@ func (q *Queries) CreateAnalysisRun(ctx context.Context, arg CreateAnalysisRunPa
 		&i.CompletionTokens,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.AssistantMessageID,
 	)
 	return i, err
 }
@@ -78,7 +80,7 @@ const failAnalysisRun = `-- name: FailAnalysisRun :one
 UPDATE analysis_runs
 SET status = 'failed', finished_at = now(), error_code = $2
 WHERE id = $1
-RETURNING id, session_id, message_id, status, error_code, prompt_tokens, completion_tokens, started_at, finished_at
+RETURNING id, session_id, message_id, status, error_code, prompt_tokens, completion_tokens, started_at, finished_at, assistant_message_id
 `
 
 type FailAnalysisRunParams struct {
@@ -99,12 +101,13 @@ func (q *Queries) FailAnalysisRun(ctx context.Context, arg FailAnalysisRunParams
 		&i.CompletionTokens,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.AssistantMessageID,
 	)
 	return i, err
 }
 
 const getAnalysisRun = `-- name: GetAnalysisRun :one
-SELECT id, session_id, message_id, status, error_code, prompt_tokens, completion_tokens, started_at, finished_at FROM analysis_runs WHERE id = $1
+SELECT id, session_id, message_id, status, error_code, prompt_tokens, completion_tokens, started_at, finished_at, assistant_message_id FROM analysis_runs WHERE id = $1
 `
 
 func (q *Queries) GetAnalysisRun(ctx context.Context, id pgtype.UUID) (AnalysisRun, error) {
@@ -120,14 +123,15 @@ func (q *Queries) GetAnalysisRun(ctx context.Context, id pgtype.UUID) (AnalysisR
 		&i.CompletionTokens,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.AssistantMessageID,
 	)
 	return i, err
 }
 
 const insertAnalysisResult = `-- name: InsertAnalysisResult :one
-INSERT INTO analysis_results (run_id, tool_name, result_json, chart_spec_json)
-VALUES ($1, $2, $3, $4)
-RETURNING id, run_id, tool_name, result_json, chart_spec_json, created_at
+INSERT INTO analysis_results (run_id, tool_name, result_json, chart_spec_json, plan_json)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, run_id, tool_name, result_json, chart_spec_json, created_at, plan_json
 `
 
 type InsertAnalysisResultParams struct {
@@ -135,6 +139,7 @@ type InsertAnalysisResultParams struct {
 	ToolName      pgtype.Text
 	ResultJson    []byte
 	ChartSpecJson []byte
+	PlanJson      []byte
 }
 
 func (q *Queries) InsertAnalysisResult(ctx context.Context, arg InsertAnalysisResultParams) (AnalysisResult, error) {
@@ -143,6 +148,7 @@ func (q *Queries) InsertAnalysisResult(ctx context.Context, arg InsertAnalysisRe
 		arg.ToolName,
 		arg.ResultJson,
 		arg.ChartSpecJson,
+		arg.PlanJson,
 	)
 	var i AnalysisResult
 	err := row.Scan(
@@ -152,12 +158,13 @@ func (q *Queries) InsertAnalysisResult(ctx context.Context, arg InsertAnalysisRe
 		&i.ResultJson,
 		&i.ChartSpecJson,
 		&i.CreatedAt,
+		&i.PlanJson,
 	)
 	return i, err
 }
 
 const listAnalysisResults = `-- name: ListAnalysisResults :many
-SELECT id, run_id, tool_name, result_json, chart_spec_json, created_at FROM analysis_results WHERE run_id = $1 ORDER BY created_at
+SELECT id, run_id, tool_name, result_json, chart_spec_json, created_at, plan_json FROM analysis_results WHERE run_id = $1 ORDER BY created_at
 `
 
 func (q *Queries) ListAnalysisResults(ctx context.Context, runID pgtype.UUID) ([]AnalysisResult, error) {
@@ -176,6 +183,7 @@ func (q *Queries) ListAnalysisResults(ctx context.Context, runID pgtype.UUID) ([
 			&i.ResultJson,
 			&i.ChartSpecJson,
 			&i.CreatedAt,
+			&i.PlanJson,
 		); err != nil {
 			return nil, err
 		}
@@ -185,4 +193,70 @@ func (q *Queries) ListAnalysisResults(ctx context.Context, runID pgtype.UUID) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const listAnalysisSessionTurns = `-- name: ListAnalysisSessionTurns :many
+SELECT m.id, m.role, m.content, m.created_at,
+       res.result_json, res.chart_spec_json, res.plan_json
+FROM analysis_messages m
+LEFT JOIN analysis_runs r ON r.assistant_message_id = m.id
+LEFT JOIN analysis_results res ON res.run_id = r.id
+WHERE m.session_id = $1
+ORDER BY m.created_at, m.id
+`
+
+type ListAnalysisSessionTurnsRow struct {
+	ID            pgtype.UUID
+	Role          string
+	Content       string
+	CreatedAt     pgtype.Timestamptz
+	ResultJson    []byte
+	ChartSpecJson []byte
+	PlanJson      []byte
+}
+
+// Conversation turns with their run artifacts. A user message has no result; an
+// assistant message carries the result, chart, and plan written by its run.
+func (q *Queries) ListAnalysisSessionTurns(ctx context.Context, sessionID pgtype.UUID) ([]ListAnalysisSessionTurnsRow, error) {
+	rows, err := q.db.Query(ctx, listAnalysisSessionTurns, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAnalysisSessionTurnsRow
+	for rows.Next() {
+		var i ListAnalysisSessionTurnsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Role,
+			&i.Content,
+			&i.CreatedAt,
+			&i.ResultJson,
+			&i.ChartSpecJson,
+			&i.PlanJson,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const setAnalysisRunAssistant = `-- name: SetAnalysisRunAssistant :exec
+UPDATE analysis_runs SET assistant_message_id = $2 WHERE id = $1
+`
+
+type SetAnalysisRunAssistantParams struct {
+	ID                 pgtype.UUID
+	AssistantMessageID pgtype.UUID
+}
+
+// Links the run to the assistant message it produced, so history can find the
+// result/chart/plan for that turn.
+func (q *Queries) SetAnalysisRunAssistant(ctx context.Context, arg SetAnalysisRunAssistantParams) error {
+	_, err := q.db.Exec(ctx, setAnalysisRunAssistant, arg.ID, arg.AssistantMessageID)
+	return err
 }
