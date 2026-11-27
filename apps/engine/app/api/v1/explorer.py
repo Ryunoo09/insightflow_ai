@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 import threading
 from decimal import Decimal
 from pathlib import Path
@@ -23,6 +24,8 @@ from app.storage.resolver import StorageResolver
 
 router = APIRouter()
 
+_MEMORY_LIMIT = re.compile(r"^[0-9]+(?:\.[0-9]+)?\s?(?:KB|MB|GB|TB)$", re.IGNORECASE)
+
 
 @router.post("/datasets/rows/query", response_model=RowsQueryResponse)
 def query_rows(req: RowsQueryRequest, _: None = Depends(require_internal_token)) -> RowsQueryResponse:
@@ -36,6 +39,7 @@ def query_rows(req: RowsQueryRequest, _: None = Depends(require_internal_token))
     plan = compile_query([column.name for column in columns], req)
 
     connection = duckdb.connect(database=":memory:")
+    _apply_reader_limits(connection)
     # Abort a runaway scan without killing the worker thread.
     timer = threading.Timer(settings.explorer_timeout_seconds, connection.interrupt)
     timer.start()
@@ -57,8 +61,25 @@ def query_rows(req: RowsQueryRequest, _: None = Depends(require_internal_token))
     return RowsQueryResponse(columns=columns, rows=payload, total=int(total))
 
 
+def _apply_reader_limits(connection: duckdb.DuckDBPyConnection) -> None:
+    """Bound memory/threads. Only SELECT statements are ever executed here, so
+    the connection cannot write even though an in-memory DuckDB cannot be opened
+    with access_mode=READ_ONLY."""
+    limit = settings.explorer_memory_limit.strip()
+    if not _MEMORY_LIMIT.match(limit):
+        limit = "1GB"
+    connection.execute(f"SET memory_limit='{limit}'")
+    connection.execute(f"SET threads={max(1, int(settings.explorer_threads))}")
+
+
+def _ensure_read_only(sql: str) -> None:
+    if not sql.lstrip().lower().startswith("select"):
+        raise ExplorerQueryError("EXPLORER_READ_ONLY", "hanya kueri baca yang diizinkan.")
+
+
 def _fetch_page(connection: duckdb.DuckDBPyConnection, plan: CompiledQuery, path: Path) -> tuple[list[tuple], list[str]]:
     sql = f"SELECT * FROM read_parquet(?){plan.where_sql}{plan.order_sql} LIMIT ? OFFSET ?"
+    _ensure_read_only(sql)
     cursor = connection.execute(sql, [str(path), *plan.where_params, plan.limit, plan.offset])
     names = [description[0] for description in cursor.description]
     return cursor.fetchall(), names
@@ -66,6 +87,7 @@ def _fetch_page(connection: duckdb.DuckDBPyConnection, plan: CompiledQuery, path
 
 def _count(connection: duckdb.DuckDBPyConnection, plan: CompiledQuery, path: Path) -> int:
     sql = f"SELECT COUNT(*) FROM read_parquet(?){plan.where_sql}"
+    _ensure_read_only(sql)
     row = connection.execute(sql, [str(path), *plan.where_params]).fetchone()
     return int(row[0]) if row else 0
 

@@ -24,8 +24,11 @@ class Settings(BaseSettings):
     profile_threads: int = 2
     profile_timeout_seconds: int = 30
 
-    # Explorer query cap (Plan 05 / TASK-501): a slow scan is aborted.
+    # Explorer query caps (Plan 05 / TASK-501): a slow scan is aborted and the
+    # reader connection is memory-bounded.
     explorer_timeout_seconds: int = 5
+    explorer_memory_limit: str = "1GB"
+    explorer_threads: int = 2
 
 
 settings = Settings()

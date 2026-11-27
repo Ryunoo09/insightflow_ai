@@ -138,3 +138,70 @@ def test_rows_query_missing_parquet_is_not_ready(tmp_path, monkeypatch):
     )
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "EXPLORER_NOT_READY"
+
+
+def _write_large(tmp_path, rows=150):
+    resolver = StorageResolver(tmp_path)
+    path = resolver.parquet_path(WS, DS, 1)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    table = pa.table(
+        {
+            "id": pa.array(list(range(rows))),
+            "category": pa.array(["a" if index % 2 == 0 else "b" for index in range(rows)]),
+            "revenue": pa.array([float(index) for index in range(rows)]),
+        }
+    )
+    pq.write_table(table, path)
+
+
+def _query(client, **overrides):
+    return client.post(
+        "/v1/datasets/rows/query",
+        headers={"X-Internal-Token": "secret"},
+        json=_body(**overrides),
+    )
+
+
+def test_rows_query_pages_exact_blocks(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    _write_large(tmp_path)
+
+    first = _query(client, offset=0, limit=100).json()
+    assert len(first["rows"]) == 100
+    assert first["total"] == 150
+    assert first["rows"][0]["id"] == 0
+
+    second = _query(client, offset=100, limit=100).json()
+    assert len(second["rows"]) == 50
+    assert second["rows"][0]["id"] == 100
+
+
+def test_rows_query_sorts_ascending_and_descending(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    _write_large(tmp_path)
+
+    ascending = _query(client, limit=3, sort=[{"column": "revenue", "direction": "asc"}]).json()
+    assert [row["id"] for row in ascending["rows"]] == [0, 1, 2]
+
+    descending = _query(client, limit=3, sort=[{"column": "revenue", "direction": "desc"}]).json()
+    assert [row["id"] for row in descending["rows"]] == [149, 148, 147]
+
+
+def test_rows_query_filters_eq_and_gt(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    _write_large(tmp_path)
+
+    equals = _query(client, limit=1, filters=[{"column": "category", "operator": "eq", "value": "b"}]).json()
+    assert equals["total"] == 75
+    assert equals["rows"][0]["category"] == "b"
+
+    greater = _query(client, limit=1, filters=[{"column": "id", "operator": "gt", "value": 145}]).json()
+    assert greater["total"] == 4
+
+
+def test_ensure_read_only_rejects_writes():
+    from app.api.v1.explorer import _ensure_read_only
+
+    with pytest.raises(ExplorerQueryError) as err:
+        _ensure_read_only("DROP TABLE dataset_columns")
+    assert err.value.code == "EXPLORER_READ_ONLY"
