@@ -86,6 +86,11 @@ func (h *Handler) Explorer(c *gin.Context) {
 		writeExplorerError(c, err)
 		return
 	}
+	// Restore the uploaded header for display; the normalized name stays the
+	// field identifier used by rows/sort/filter.
+	for i := range out.Columns {
+		out.Columns[i].OriginalName = target.OriginalNames[out.Columns[i].Name]
+	}
 	c.JSON(http.StatusOK, out)
 }
 

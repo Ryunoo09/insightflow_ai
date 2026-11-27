@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -281,6 +284,13 @@ func (s *Service) Reprocess(ctx context.Context, datasetID, userID uuid.UUID) (D
 			return ErrBusy
 		}
 		next := latest.VersionNo + 1
+		// Each version gets its own source copy: the engine derives the source
+		// path from version_no, and retention deletes per-version files.
+		workspaceID := uuid.UUID(ds.WorkspaceID.Bytes)
+		sourcePath, err := s.resolver.SourcePath(workspaceID.String(), datasetID.String(), int(next), latest.FileFormat)
+		if err != nil {
+			return err
+		}
 		version, err := q.CreateDatasetVersion(ctx, dbgen.CreateDatasetVersionParams{
 			DatasetID:      pgconv.UUID(datasetID),
 			VersionNo:      next,
@@ -288,9 +298,14 @@ func (s *Service) Reprocess(ctx context.Context, datasetID, userID uuid.UUID) (D
 			OriginalName:   latest.OriginalName,
 			ByteSize:       latest.ByteSize,
 			ChecksumSha256: latest.ChecksumSha256,
-			SourcePath:     latest.SourcePath,
+			SourcePath:     sourcePath,
 		})
 		if err != nil {
+			return err
+		}
+		// shortcut: a rollback after this copy leaves an orphan source file;
+		// harmless, move to a post-commit file queue if it ever matters.
+		if err := copyFile(latest.SourcePath, sourcePath); err != nil {
 			return err
 		}
 		if _, err := q.UpdateDatasetCurrentVersion(ctx, dbgen.UpdateDatasetCurrentVersionParams{
@@ -317,16 +332,18 @@ func (s *Service) Reprocess(ctx context.Context, datasetID, userID uuid.UUID) (D
 
 // ExplorerTarget is the dataset/version an explorer query runs against.
 type ExplorerTarget struct {
-	DatasetID   uuid.UUID
-	WorkspaceID uuid.UUID
-	VersionID   uuid.UUID
-	VersionNo   int32
-	Columns     map[string]struct{}
+	DatasetID     uuid.UUID
+	WorkspaceID   uuid.UUID
+	VersionID     uuid.UUID
+	VersionNo     int32
+	Columns       map[string]struct{}
+	OriginalNames map[string]string
 }
 
 // ExplorerTarget resolves workspace access and the version to read. A zero
 // versionNo selects the dataset's current version. Columns is the authoritative
-// identifier allowlist for this version (Plan 05 SEC-PARAM-SQL).
+// identifier allowlist for this version (Plan 05 SEC-PARAM-SQL); OriginalNames
+// maps the normalized name back to the header the user uploaded.
 func (s *Service) ExplorerTarget(ctx context.Context, datasetID, userID uuid.UUID, versionNo int32) (ExplorerTarget, error) {
 	d, err := s.repo.GetSummary(ctx, datasetID, userID)
 	if err != nil {
@@ -348,15 +365,18 @@ func (s *Service) ExplorerTarget(ctx context.Context, datasetID, userID uuid.UUI
 		return ExplorerTarget{}, err
 	}
 	names := make(map[string]struct{}, len(columns))
+	originals := make(map[string]string, len(columns))
 	for _, column := range columns {
 		names[column.ColumnName] = struct{}{}
+		originals[column.ColumnName] = column.OriginalName
 	}
 	return ExplorerTarget{
-		DatasetID:   uuid.UUID(d.ID.Bytes),
-		WorkspaceID: uuid.UUID(d.WorkspaceID.Bytes),
-		VersionID:   uuid.UUID(v.ID.Bytes),
-		VersionNo:   v.VersionNo,
-		Columns:     names,
+		DatasetID:     uuid.UUID(d.ID.Bytes),
+		WorkspaceID:   uuid.UUID(d.WorkspaceID.Bytes),
+		VersionID:     uuid.UUID(v.ID.Bytes),
+		VersionNo:     v.VersionNo,
+		Columns:       names,
+		OriginalNames: originals,
 	}, nil
 }
 
@@ -460,6 +480,27 @@ func (s *Service) Complete(ctx context.Context, versionID uuid.UUID, parquetPath
 		}
 		return enforceRetention(ctx, q, ready.DatasetID)
 	})
+}
+
+// copyFile streams src into dst, creating parent directories.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 // Fail records a permanent processing failure (job worker).

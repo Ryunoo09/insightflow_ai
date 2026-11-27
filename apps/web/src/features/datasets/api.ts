@@ -62,7 +62,7 @@ export type ExplorerQuery = {
   search?: string;
 };
 
-export type ExplorerColumn = { name: string; type: string };
+export type ExplorerColumn = { name: string; type: string; original_name?: string };
 
 export type ExplorerRows = {
   columns: ExplorerColumn[];

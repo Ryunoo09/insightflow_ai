@@ -185,6 +185,11 @@ func TestReprocessVersionsAndRetention(t *testing.T) {
 			t.Fatalf("parquet path: %v", err)
 		}
 		writeFile(t, parquet)
+		source, err := resolver.SourcePath(wsID.String(), id.String(), int(versionNo), FormatCSV)
+		if err != nil {
+			t.Fatalf("source path: %v", err)
+		}
+		writeFile(t, source)
 		if err := svc.Complete(ctx, uuid.UUID(ver.ID.Bytes), parquet, ProcessResult{
 			RowCount: 1, ColumnCount: 1,
 			Profile: []byte(`{}`), ProcessingReport: []byte(`{}`),
@@ -200,6 +205,13 @@ func TestReprocessVersionsAndRetention(t *testing.T) {
 	}
 	if d.CurrentVersionNo != 2 {
 		t.Fatalf("current version = %d, want 2", d.CurrentVersionNo)
+	}
+	v2source, err := resolver.SourcePath(wsID.String(), id.String(), 2, FormatCSV)
+	if err != nil {
+		t.Fatalf("v2 source path: %v", err)
+	}
+	if _, err := os.Stat(v2source); err != nil {
+		t.Fatalf("reprocess must copy the source into the new version dir: %v", err)
 	}
 	v1, _ := q.GetDatasetVersionByNo(ctx, dbgen.GetDatasetVersionByNoParams{DatasetID: pgconv.UUID(id), VersionNo: 1})
 	if v1.Status != "ready" {

@@ -87,4 +87,20 @@ describe("DataExplorer datasource", () => {
 
     expect(fail).toHaveBeenCalled();
   });
+
+  it("shows the uploaded header while keeping the normalized field", () => {
+    render(
+      <DataExplorer
+        datasetId="ds-1"
+        columns={[{ name: "transactionno", type: "number", original_name: "TransactionNo" }]}
+        version={0}
+        search=""
+        initialSort={null}
+        onSortChange={() => {}}
+      />,
+    );
+
+    const columnDefs = (grid.props as { columnDefs: { field: string; headerName: string }[] }).columnDefs;
+    expect(columnDefs[0]).toMatchObject({ field: "transactionno", headerName: "# TransactionNo" });
+  });
 });

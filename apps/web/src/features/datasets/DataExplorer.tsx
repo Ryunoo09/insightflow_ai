@@ -29,16 +29,19 @@ export function DataExplorer({ datasetId, columns, version, search, initialSort,
 
   const columnDefs = useMemo<ColDef[]>(
     () =>
-      columns.map((column) => ({
-        field: column.name,
-        headerName: `${TYPE_GLYPH[column.type] ?? "Aa"} ${column.name}`,
-        headerTooltip: `${column.name} (${TYPE_LABEL[column.type] ?? column.type})`,
-        minWidth: 120,
-        sortable: true,
-        filter: false,
-        cellClass: column.type === "number" ? "text-right tabular-nums" : column.type === "date" ? "whitespace-nowrap" : undefined,
-        headerClass: column.type === "number" ? "text-right" : undefined,
-      })),
+      columns.map((column) => {
+        const label = column.original_name || column.name;
+        return {
+          field: column.name,
+          headerName: `${TYPE_GLYPH[column.type] ?? "Aa"} ${label}`,
+          headerTooltip: `${label} (${TYPE_LABEL[column.type] ?? column.type})`,
+          minWidth: 120,
+          sortable: true,
+          filter: false,
+          cellClass: column.type === "number" ? "text-right tabular-nums" : column.type === "date" ? "whitespace-nowrap" : undefined,
+          headerClass: column.type === "number" ? "text-right" : undefined,
+        };
+      }),
     [columns],
   );
 

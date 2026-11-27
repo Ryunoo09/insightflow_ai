@@ -90,10 +90,12 @@ type ExplorerFilter struct {
 	Value    any    `json:"value"`
 }
 
-// ExplorerColumn is one column of the parquet schema.
+// ExplorerColumn is one column of the parquet schema. OriginalName is filled by
+// the Go gateway from dataset_columns so the UI can show the uploaded header.
 type ExplorerColumn struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	OriginalName string `json:"original_name,omitempty"`
 }
 
 // QueryRowsResponse is the engine explorer body.
