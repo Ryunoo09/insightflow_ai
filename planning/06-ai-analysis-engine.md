@@ -169,7 +169,10 @@ Membangun modul perencana di Python Engine yang memetakan pertanyaan bahasa alam
    - Verifikasi bahwa tool yang diminta ada dalam registry tool terdaftar.
    - Verifikasi bahwa setiap kolom yang dirujuk dalam argumen tool benar-benar ada dalam skema Parquet.
    - Tolak rencana yang meminta eksekusi kode bebas atau query di luar allowlist.
+   - Verifikasi **kecocokan tipe**, bukan hanya nama: `sum`/`avg` hanya pada kolom numerik; `time_series_metric.group_by` wajib bertipe `date` dan `bucket` wajib terisi.
+   - Perlakukan identifier sebagai string yang harus **sama persis** dengan nama kolom schema; tolak identifier yang memuat spasi, tanda kurung, atau ekspresi SQL (mis. `date_trunc('month', created)`).
    - Jika plan invalid, picu satu kali percobaan perbaikan (repair prompt) ke LLM.
+5. Panggil LLM dengan `response_format: {"type": "json_schema", "strict": true}` yang memuat aturan kondisional (`allOf` + `if/then`: `time_series_metric` → `required: [group_by, bucket]`). Jangan menyediakan jalur `json_object` (lihat §9.1).
 
 **Expected Files:**
 - `apps/engine/app/orchestration/planner.py`
@@ -372,6 +375,39 @@ Memisahkan orkestrasi sesi Go API -> streaming gateway SSE -> Engine Planner & V
 |---|---|---|---|
 | Outage atau latensi tinggi dari provider LLM eksternal | Analisis pengguna terhenti | Sedang | Terapkan timeout ketat 30 detik, 2 kali retry transient, dan pesan error informatif jika provider tidak dapat dijangkau. |
 | Grounding Checker menolak narasi valid karena perbedaan format angka | Kegagalan narasi palsu | Sedang | Normalisasi format angka (contoh: koma desimal vs titik, penulisan "1.5 juta" vs "1500000") sebelum pencocokan. |
+| Output planner tidak deterministik walau `temperature = 0` | Run gagal di tengah jalan, biaya panggilan naik | Tinggi (terukur) | Validator ketat + satu repair retry (§9.1 aturan 4); catat jumlah retry ke `analysis_runs`. |
+| Model mengirim ekspresi SQL di field identifier | Injeksi identifier ke query DuckDB | Sedang (terukur) | Identifier harus match persis nama kolom schema + regex `^[A-Za-z0-9_.-]+$` (§9.1 aturan 4). |
+| Plan bentuk-valid tapi makna salah (mis. "profit" dipetakan ke `amount`) | Angka benar secara komputasi, salah secara bisnis | Tinggi | `PlanPanel` wajib menampilkan plan ke pengguna; narasi tidak boleh jadi satu-satunya sumber. |
+| WAF provider memblokir prompt berisi keyword SQL destruktif | Pertanyaan pengguna ditolak sebelum sampai ke model | Rendah | Engine wajib menangani body non-JSON (`text/html`) dan memetakan 403 ke `LLM_REQUEST_BLOCKED`, bukan 500 (§9.1 aturan 5). |
+| Kuota provider tidak terbaca lewat API | Kehabisan kuota muncul sebagai error samar | Sedang | Jangan bergantung pada endpoint kuota provider; pakai kuota harian internal di Redis (Scope §1.2) sebagai sumber kebenaran. |
+| Latensi p95 tinggi pada panggilan pembuka (cold start) | UI terasa hang | Sedang | Semua tahapan wajib di-stream lewat SSE `stage_start`; jangan menunggu narasi selesai baru render. |
+
+### 9.1 Hasil Uji Provider LLM (pra-implementasi)
+
+Uji dijalankan sebelum TASK-603 ditulis, memakai skema `AnalysisPlan` minimal
+(`tool`, `column`, `aggregation`, `group_by?`, `bucket?`) dan lima kasus: pertanyaan lugas
+(Indonesia), pertanyaan ambigu, schema lebar 22 kolom (time series), kolom yang tidak ada
+(`profit`), dan percobaan injeksi SQL. Skrip probe bersifat ad-hoc di luar repo
+(`llm-plan-probe.mjs`, `llm-schema-probe.mjs`); hasilnya dicatat di sini, bukan di-commit.
+
+| Provider / model | `json_schema` strict | `json_object` | Catatan |
+|---|---|---|---|
+| OpenRouter `perplexity/pplx-decider-v1.3:free` | 0/3 — HTTP 400 | 0/3 | Model "decisions", menolak endpoint `chat/completions`. Tidak dapat dipakai. |
+| OpenRouter `nvidia/nemotron-3.5-super-vl:free` | 4/5 | 0/5 | Membocorkan SQL ke identifier (`group_by: "date_trunc('month', created)"`), `sum` pada kolom teks. |
+| Sumopod `deepseek-v4.1-flash-1017` | 4/5 | 0/5 | Plan bersih, tetapi `time_series_metric` menghilangkan `group_by` bila skema tidak kondisional. |
+| Sumopod `claude-haiku-5-5` | 4/5 | 0/5 | Paling bersih dan tercepat (median ±2.2 s, p95 ±7.0 s). Satu kegagalan: `time_series_metric.group_by` = kolom teks. |
+
+Kegagalan yang bukan disebabkan model (berlaku semua provider):
+- `json_object` tidak pernah mematuhi enum: `tool` keluar sebagai `aggregate`, `query`, atau `sql`.
+- Prompt berisi keyword SQL destruktif (`DROP TABLE`) dijawab **HTTP 403 Cloudflare** dengan body HTML, bukan JSON.
+
+Aturan yang mengikat TASK-603 karena hasil uji ini:
+1. Hanya `response_format: json_schema` + `strict: true`; tidak ada fallback `json_object`.
+2. Skema wajib memakai aturan kondisional: `time_series_metric` → `required: [group_by, bucket]`. Field `time_column` tidak dipakai karena memicu kolom karangan.
+3. Field `bucket` wajib berupa enum (`day`, `week`, `month`, `quarter`, `year`); model tidak boleh menyusun nama kolom turunan seperti `created_monthly`.
+4. Validator menolak plan yang gagal kecocokan nama/tipe, lalu retry perbaikan **tepat satu kali**. Rata-rata ±17% run butuh retry pada model terbaik.
+5. Respons non-2xx berbody HTML diperlakukan sebagai kegagalan provider (`LLM_REQUEST_BLOCKED` / `LLM_UNAVAILABLE`), tidak boleh diparse sebagai JSON dan tidak boleh menjadi 500 dengan stack trace.
+6. Default pengembangan: `claude-haiku-5-5`; pembanding: `deepseek-v4.1-flash-1017`. Sebelum rilis, satu model berbayar stabil harus lolos probe yang sama.
 
 ---
 
@@ -379,7 +415,9 @@ Memisahkan orkestrasi sesi Go API -> streaming gateway SSE -> Engine Planner & V
 
 - [ ] Sesi analisis dapat dibuat dan riwayat pesan tersimpan di database.
 - [ ] LLM Planner menghasilkan rencana terstruktur yang tervalidasi secara semantik.
+- [ ] `PlanValidator` menolak plan dengan kolom/tool di luar allowlist, agregasi yang tidak sesuai tipe kolom, dan `time_series_metric` tanpa `group_by` bertipe date + `bucket`; retry perbaikan maksimal satu kali.
 - [ ] Tool DuckDB mengeksekusi kalkulasi deterministik terhadap file Parquet tanpa kesalahan matematika.
 - [ ] Grounding Checker berhasil mendeteksi dan mencegah narasi angka halusinasi.
 - [ ] Aliran event SSE terkirim secara stabil dan mulus ke antarmuka web klien.
+- [ ] Kegagalan provider LLM (timeout, 4xx berbody HTML/WAF, kuota habis) menghasilkan error terkontrol tanpa stack trace ke klien.
 - [ ] Seluruh unit dan integration test AI loop analitik lulus 100%.
