@@ -13,6 +13,7 @@ import (
 
 	"insightflow/api/internal/modules/users"
 	"insightflow/api/internal/platform/dbgen"
+	"insightflow/api/internal/platform/pgconv"
 )
 
 func TestExplorerRejectsNonMember(t *testing.T) {
@@ -53,6 +54,57 @@ func TestExplorerRequiresReadyVersion(t *testing.T) {
 	}
 	if body.Error.Code != "DATASET_NOT_READY" {
 		t.Fatalf("code = %q, want DATASET_NOT_READY", body.Error.Code)
+	}
+}
+
+func markReady(t *testing.T, svc *Service, q *dbgen.Queries, datasetID uuid.UUID, columnName string) {
+	t.Helper()
+	ctx := context.Background()
+	version, err := q.GetDatasetVersionByNo(ctx, dbgen.GetDatasetVersionByNoParams{
+		DatasetID: pgconv.UUID(datasetID),
+		VersionNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("version: %v", err)
+	}
+	if err := svc.Complete(ctx, uuid.UUID(version.ID.Bytes), "data.parquet", ProcessResult{
+		RowCount:    2,
+		ColumnCount: 1,
+		Columns: []ColumnResult{{
+			Ordinal:      1,
+			Name:         columnName,
+			OriginalName: columnName,
+			LogicalType:  "number",
+			Role:         "measure",
+		}},
+		Profile: []byte(`{"quality_score": 90}`),
+	}); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+}
+
+func TestExplorerRejectsUnknownColumn(t *testing.T) {
+	svc, q, wsID, userID := testDeps(t)
+	dsID := mustCreate(t, svc, wsID, userID, "Explorer kolom")
+	markReady(t, svc, q, dsID, "revenue")
+
+	rec := explorerRequest(t, NewHandler(svc, nil, 1<<20, 1<<20), dsID, userID, `{"sort":[{"column":"secret","direction":"asc"}]}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422 (body %s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "EXPLORER_QUERY_INVALID") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestExplorerAllowsKnownColumnThenNeedsEngine(t *testing.T) {
+	svc, q, wsID, userID := testDeps(t)
+	dsID := mustCreate(t, svc, wsID, userID, "Explorer kolom valid")
+	markReady(t, svc, q, dsID, "revenue")
+
+	rec := explorerRequest(t, NewHandler(svc, nil, 1<<20, 1<<20), dsID, userID, `{"sort":[{"column":"revenue","direction":"desc"}]}`)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 once the allowlist passes (body %s)", rec.Code, rec.Body.String())
 	}
 }
 

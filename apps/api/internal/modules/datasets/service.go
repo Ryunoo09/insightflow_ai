@@ -319,11 +319,14 @@ func (s *Service) Reprocess(ctx context.Context, datasetID, userID uuid.UUID) (D
 type ExplorerTarget struct {
 	DatasetID   uuid.UUID
 	WorkspaceID uuid.UUID
+	VersionID   uuid.UUID
 	VersionNo   int32
+	Columns     map[string]struct{}
 }
 
 // ExplorerTarget resolves workspace access and the version to read. A zero
-// versionNo selects the dataset's current version.
+// versionNo selects the dataset's current version. Columns is the authoritative
+// identifier allowlist for this version (Plan 05 SEC-PARAM-SQL).
 func (s *Service) ExplorerTarget(ctx context.Context, datasetID, userID uuid.UUID, versionNo int32) (ExplorerTarget, error) {
 	d, err := s.repo.GetSummary(ctx, datasetID, userID)
 	if err != nil {
@@ -340,10 +343,20 @@ func (s *Service) ExplorerTarget(ctx context.Context, datasetID, userID uuid.UUI
 	if v.Status != "ready" {
 		return ExplorerTarget{}, ErrNotReady
 	}
+	columns, err := s.repo.Columns(ctx, uuid.UUID(v.ID.Bytes))
+	if err != nil {
+		return ExplorerTarget{}, err
+	}
+	names := make(map[string]struct{}, len(columns))
+	for _, column := range columns {
+		names[column.ColumnName] = struct{}{}
+	}
 	return ExplorerTarget{
 		DatasetID:   uuid.UUID(d.ID.Bytes),
 		WorkspaceID: uuid.UUID(d.WorkspaceID.Bytes),
+		VersionID:   uuid.UUID(v.ID.Bytes),
 		VersionNo:   v.VersionNo,
+		Columns:     names,
 	}, nil
 }
 

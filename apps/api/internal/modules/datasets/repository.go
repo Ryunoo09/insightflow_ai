@@ -160,6 +160,11 @@ func (r *Repository) ListVersions(ctx context.Context, datasetID uuid.UUID) ([]d
 	return r.q.ListDatasetVersions(ctx, pgconv.UUID(datasetID))
 }
 
+// Columns lists the column metadata persisted for a version.
+func (r *Repository) Columns(ctx context.Context, versionID uuid.UUID) ([]dbgen.DatasetColumn, error) {
+	return r.q.ListDatasetColumns(ctx, pgconv.UUID(versionID))
+}
+
 // ListVersionsBeyondRetention returns versions older than the newest keep.
 func (r *Repository) ListVersionsBeyondRetention(ctx context.Context, datasetID uuid.UUID, keep int32) ([]dbgen.DatasetVersion, error) {
 	return r.q.ListDatasetVersionsBeyondRetention(ctx, dbgen.ListDatasetVersionsBeyondRetentionParams{

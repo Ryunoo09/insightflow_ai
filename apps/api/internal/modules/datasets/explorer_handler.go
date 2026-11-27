@@ -58,6 +58,13 @@ func (h *Handler) Explorer(c *gin.Context) {
 		writeDatasetError(c, err)
 		return
 	}
+	// Identifiers must exist in the version's persisted column metadata before
+	// any query reaches the engine (Plan 05 SEC-PARAM-SQL).
+	if !validExplorerColumns(target.Columns, req.Sort, req.Filters) {
+		httpx.WriteError(c, httpx.Err(http.StatusUnprocessableEntity, "EXPLORER_QUERY_INVALID", "Filter atau urutan kolom tidak valid.").
+			WithDetails(httpx.ValidationDetails{Field: "column", Issue: "unknown"}))
+		return
+	}
 	if h.engine == nil {
 		httpx.WriteError(c, httpx.Err(http.StatusServiceUnavailable, "ENGINE_UNAVAILABLE", "Explorer sementara tidak tersedia."))
 		return
@@ -133,4 +140,20 @@ func writeExplorerError(c *gin.Context, err error) {
 		}
 	}
 	httpx.WriteError(c, httpx.Err(http.StatusServiceUnavailable, "ENGINE_UNAVAILABLE", "Explorer sementara tidak tersedia."))
+}
+
+// validExplorerColumns checks every sort/filter identifier against the
+// version's authoritative column metadata.
+func validExplorerColumns(known map[string]struct{}, sorts []engineclient.ExplorerSort, filters []engineclient.ExplorerFilter) bool {
+	for _, sort := range sorts {
+		if _, ok := known[sort.Column]; !ok {
+			return false
+		}
+	}
+	for _, filter := range filters {
+		if _, ok := known[filter.Column]; !ok {
+			return false
+		}
+	}
+	return true
 }
