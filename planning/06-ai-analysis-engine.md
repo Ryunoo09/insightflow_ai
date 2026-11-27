@@ -421,3 +421,42 @@ Aturan yang mengikat TASK-603 karena hasil uji ini:
 - [ ] Aliran event SSE terkirim secara stabil dan mulus ke antarmuka web klien.
 - [ ] Kegagalan provider LLM (timeout, 4xx berbody HTML/WAF, kuota habis) menghasilkan error terkontrol tanpa stack trace ke klien.
 - [ ] Seluruh unit dan integration test AI loop analitik lulus 100%.
+
+---
+
+## 11. As-Built Notes
+
+> Status tetap `Planned` mengikuti konvensi repo (plan 01–11 tidak di-flip ke Done);
+> kemajuan dilacak di commit history dan `00-roadmap.md`. Bagian ini mencatat
+> realisasi implementasi + bukti verifikasi agar isi plan cocok dengan kode.
+
+### 11.1 Deviations dari spesifikasi
+| Spec | As-built | Alasan |
+|---|---|---|
+| `orchestration/plan_validator.py` memuat konstanta + prompt + `plan_question` | `plan_validator.py` validator murni; planner dipisah ke `orchestration/planner.py` | Satu modul = satu tanggung jawab; validator bisa diuji tanpa LLM. |
+| Schema plan/result/chart dalam satu modul | `schemas/plan.py`, `schemas/result.py`, `schemas/chart.py` | Batas kontrak jelas dan import tidak melingkar. |
+| `POST /v1/ai/analyze` mengembalikan plan + hasil | Sama, ditambah field `usage` (`prompt_tokens`, `completion_tokens`, `calls`) di frame `run_completed` | Go menyimpan biaya token per run di `analysis_runs`. |
+| Kuota harian "diverifikasi" (tanpa mekanisme) | Counter Redis `quota:analysis:{workspace}:{yyyymmdd}` (TTL sampai akhir hari UTC), cek sebelum run dibuat | Satu-satunya batas biaya yang tidak bergantung API provider. Redis gagal → fail-open. |
+| Route UI hanya `/app/:workspaceId/analysis/:sessionId` | Ditambah `/app/:workspaceId/analysis` (daftar sesi) + `GET /workspaces/:id/analysis/sessions` | Tanpa daftar, sesi lama tidak bisa dibuka kembali. |
+| Risk §9 "catat jumlah retry ke `analysis_runs`" | `repair_attempts` dikirim di frame `plan_generated` dan ditampilkan di `PlanPanel`, tetapi **tidak** ada kolom khusus di `analysis_runs` | Menghindari migrasi kolom; nilai tetap tersedia ke klien. |
+| Chart dirender library | SVG inline deterministik (`bar`/`line`/`scatter`/`pie` + tabel bukti) | Tidak menambah dependency; bentuk chart sudah dipilih engine. |
+| Tombol "Simpan ke Dashboard" | Dirender nonaktif (`Tersedia pada plan dashboard`) | Persistensi dashboard di luar scope Plan 06. |
+| `PlanValidator` juga menolak `sum`/`avg` pada kolom non-numerik | Ditambahkan (`TOOL_TYPE_MISMATCH` di validator + tool) | Temuan probe: model memilih agregasi numerik pada kolom teks. |
+| Identifier harus match schema + regex | Tool mencocokkan nama ke skema Parquet dan mengutipnya; nilai selalu parameter terikat | Tidak ada teks model yang menjadi SQL. |
+
+### 11.2 Bukti verifikasi (lokal, Windows)
+- Engine: `pytest` → **93 passed, 2 skipped**. Mencakup skema plan, validator semantik, `planner.py` (JSON schema + tepat satu repair), 5 tool DuckDB, grounding checker, `choose_chart`, dan pipeline SSE dengan fake LLM.
+- Go: `go build ./...` = 0, `go vet ./...` = 0, `go test -count=1 ./...` semua paket `ok`. Mencakup 6 test context builder, 5 test service DB nyata, 7 test SSE/lock/relay, quota (2 test Redis + 1 test handler 429), dan parser stream engine (3 test).
+- Web: `npm test` → **19 passed** (SSE parser lintas chunk, mapping event, streaming end-to-end dengan `ReadableStream` mock, error 429); `npm run build` = 0.
+- E2E live engine (provider nyata `claude-haiku-5-5`, Parquet 20 baris): urutan frame `stage_start → plan_generated → stage_start → tool_executed → stage_start → narrative_chunk×N → chart_ready → run_completed`; `grounded=true`, `chart=bar`, `usage={prompt_tokens:2855, completion_tokens:1091, calls:3}`.
+- E2E live stack penuh (API 8080 + engine 8000 + PostgreSQL/Redis/Mailpit nyata), register → OTP dari Mailpit → verify → membership → buat sesi → tanya:
+  - Frame: `stage_start → plan_generated → stage_start → tool_executed → stage_start → narrative_chunk×4 → chart_ready → run_completed`.
+  - Persistensi: `analysis_messages` = `user` + `assistant`; `analysis_runs.status=completed`, `prompt_tokens=1999`, `completion_tokens=401`; `analysis_results` = 1 baris.
+  - `GET /api/v1/config/limits` memuat `analysis.daily_runs_per_workspace`.
+
+### 11.3 Belum tercakup
+- Lock konkurensi & kuota diuji pada level handler, bukan dua stream HTTP paralel di E2E.
+- Sifat incremental flush dibuktikan lewat `curl -N` dan test relay; belum ada tes timing browser.
+- a11y `aria-live` belum diuji dengan screen reader otomatis.
+- Tombol "Simpan ke Dashboard" dan persistensi dashboard menunggu plan dashboard.
+- Stress/kuota provider berbayar dan pemilihan model rilis dilakukan sebelum produksi (§9.1 aturan 6).
