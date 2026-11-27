@@ -102,7 +102,7 @@ export function DatasetExplorerPage() {
             </select>
           </div>
         )}
-        <div className="min-w-56">
+        <div className="hidden min-w-56 md:block">
           <FieldLabel htmlFor="explorer-search">Cari di semua kolom</FieldLabel>
           <Input
             id="explorer-search"

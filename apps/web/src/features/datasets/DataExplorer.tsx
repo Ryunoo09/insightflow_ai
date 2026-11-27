@@ -1,23 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AgGridReact } from "ag-grid-react";
-import {
-  CommunityFeaturesModule,
-  ModuleRegistry,
-  type ColDef,
-  type GridApi,
-  type GridReadyEvent,
-  type IDatasource,
-  type SortChangedEvent,
-} from "ag-grid-community";
+import type { ColDef, GridApi, GridReadyEvent, IDatasource, SortChangedEvent } from "ag-grid-community";
 import "ag-grid-community/styles/ag-grid.css";
 import "ag-grid-community/styles/ag-theme-quartz.css";
 
 import { ApiError } from "../../lib/api";
 import { datasetsApi, type ExplorerColumn, type ExplorerSort } from "./api";
 
-ModuleRegistry.registerModules([CommunityFeaturesModule]);
-
 const BLOCK_SIZE = 100;
+
+// Column type indicators in the header (Plan 05 section 5).
+const TYPE_GLYPH: Record<string, string> = { number: "#", text: "Aa", date: "📅", boolean: "◑" };
+const TYPE_LABEL: Record<string, string> = { number: "angka", text: "teks", date: "tanggal", boolean: "boolean" };
 
 type Props = {
   datasetId: string;
@@ -37,7 +31,8 @@ export function DataExplorer({ datasetId, columns, version, search, initialSort,
     () =>
       columns.map((column) => ({
         field: column.name,
-        headerName: column.name,
+        headerName: `${TYPE_GLYPH[column.type] ?? "Aa"} ${column.name}`,
+        headerTooltip: `${column.name} (${TYPE_LABEL[column.type] ?? column.type})`,
         minWidth: 120,
         sortable: true,
         filter: false,
