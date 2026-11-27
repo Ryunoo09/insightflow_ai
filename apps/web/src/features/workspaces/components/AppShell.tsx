@@ -49,6 +49,9 @@ export function AppShell() {
               <Link to={`/app/${activeId}/datasets`} className="text-muted-foreground hover:text-foreground">
                 Dataset
               </Link>
+              <Link to={`/app/${activeId}/analysis`} className="text-muted-foreground hover:text-foreground">
+                Analisis
+              </Link>
             </nav>
           )}
           <span className="text-sm text-muted-foreground">{user?.email}</span>

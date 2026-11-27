@@ -97,6 +97,7 @@ export type Limits = {
     max_columns: number;
   };
   profile: { timeout_seconds: number };
+  analysis: { daily_runs_per_workspace: number };
   auth: { google_enabled: boolean };
 };
 

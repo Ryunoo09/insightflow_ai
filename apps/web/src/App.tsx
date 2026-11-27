@@ -1,5 +1,7 @@
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 
+import { AnalysisListPage } from "./features/analysis/pages/AnalysisListPage";
+import { AnalysisPage } from "./features/analysis/pages/AnalysisPage";
 import { RequireAuth } from "./features/auth/RequireAuth";
 import { LoginPage } from "./features/auth/pages/LoginPage";
 import { RegisterPage } from "./features/auth/pages/RegisterPage";
@@ -31,6 +33,8 @@ const router = createBrowserRouter([
       { path: ":workspaceId/datasets/new", element: <DatasetNewPage /> },
       { path: ":workspaceId/datasets/:datasetId", element: <DatasetDetailPage /> },
       { path: ":workspaceId/datasets/:datasetId/explorer", element: <DatasetExplorerPage /> },
+      { path: ":workspaceId/analysis", element: <AnalysisListPage /> },
+      { path: ":workspaceId/analysis/:sessionId", element: <AnalysisPage /> },
     ],
   },
   { path: "*", element: <Navigate to="/app" replace /> },

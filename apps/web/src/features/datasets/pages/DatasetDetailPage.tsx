@@ -1,15 +1,17 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Button, Card, FormError } from "../../../components/ui";
 import { ApiError } from "../../../lib/api";
+import { analysisApi } from "../../analysis/api";
 import { datasetsApi } from "../api";
 import { QualityScoreCard, StatusBadge } from "../components";
 
 /** Dataset detail with live status polling (/app/:workspaceId/datasets/:datasetId). */
 export function DatasetDetailPage() {
   const { workspaceId = "", datasetId = "" } = useParams();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -37,6 +39,14 @@ export function DatasetDetailPage() {
         return;
       }
       setActionError(err instanceof ApiError ? err.message : "Gagal memproses ulang dataset.");
+    },
+  });
+
+  const startAnalysis = useMutation({
+    mutationFn: () => analysisApi.create(workspaceId, datasetId, `Analisis ${data?.name ?? "dataset"}`.slice(0, 200)),
+    onSuccess: (session) => navigate(`/app/${workspaceId}/analysis/${session.id}`),
+    onError: (err) => {
+      setActionError(err instanceof ApiError ? err.message : "Gagal memulai analisis.");
     },
   });
 
@@ -87,6 +97,18 @@ export function DatasetDetailPage() {
         >
           Data Explorer
         </Link>
+        {data.status === "ready" && (
+          <Button
+            variant="ghost"
+            disabled={startAnalysis.isPending}
+            onClick={() => {
+              setActionError(null);
+              startAnalysis.mutate();
+            }}
+          >
+            {startAnalysis.isPending ? "Membuka..." : "Analisis AI"}
+          </Button>
+        )}
         <Link
           to={`/app/${workspaceId}/datasets`}
           className="text-sm font-medium text-primary hover:underline"
