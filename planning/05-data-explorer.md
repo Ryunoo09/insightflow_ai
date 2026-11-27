@@ -274,3 +274,44 @@ Memisahkan backend compiler query DuckDB -> handler Go API -> komponen AG Grid f
 - [ ] AG Grid merender data secara virtual tanpa lag performa.
 - [ ] Sorting dan filtering kolom berfungsi dan tersinkronisasi ke URL params.
 - [ ] Seluruh unit dan integration test explorer lulus 100%.
+
+---
+
+## 11. As-Built Notes
+
+> Status tetap `Planned` mengikuti konvensi repo (semua plan 01–11 tidak di-flip ke Done);
+> tracking kemajuan berada di commit history dan `00-roadmap.md`. Bagian ini mencatat
+> realisasi implementasi + bukti verifikasi agar isi plan cocok dengan kode.
+
+### 11.1 Deviations dari spesifikasi
+| Spec | As-built | Alasan |
+|---|---|---|
+| `datasource.getBlock(params)` | `IDatasource.getRows(params)` (AG Grid v32 Infinite Row Model) | API v32 memakai `getRows`, bukan `getBlock`. |
+| Kolom divalidasi terhadap skema Parquet saja | Go memvalidasi sort/filter terhadap `dataset_columns` DB, lalu Engine tetap memvalidasi terhadap skema Parquet | Dua lapis allowlist (Plan 05 §6 SEC-PARAM-SQL). |
+| `POST /api/v1/datasets/:id/rows/query` | ditambah `GET /datasets/:id/versions` (di luar §4) | Dipakai version switcher; tidak tersedia di plan. |
+| `search` global tidak ada di kontrak awal | ditambah sebagai field `search` di body Engine | Quick filter server-side lintas kolom. |
+| Bundle terpisah (`components/`, `hooks/`, `api/explorer.api.ts`) | `DataExplorer.tsx` di `features/datasets/`, helper di `api.ts` | Cukup satu file; dipecah saat tumbuh. |
+| `AllCommunityModule` | dihapus — pakai build package `ag-grid-community` tanpa `registerModules` | `AllCommunityModule` tak ada di v32; registrasi eksplisit memicu warning "mixing modules and packages". |
+| Tinggi grid `calc(100vh - 200px)` | `calc(100vh - 260px)` | Ruang untuk header + status bar. |
+| `.env.example` | `EXPLORER_TIMEOUT_SECONDS`, `EXPLORER_MEMORY_LIMIT`, `EXPLORER_THREADS` | Batas resource koneksi baca DuckDB (`memory_limit` + `threads`). |
+
+Catatan hardening: DuckDB in-memory **tidak bisa** dibuka `access_mode=READ_ONLY`, jadi
+proteksi menulis ditangani dengan guard `_ensure_read_only` (hanya statement `SELECT` yang
+dieksekusi) + `SET memory_limit` / `SET threads`.
+
+### 11.2 Bukti verifikasi (lokal, Windows)
+- Engine: `pytest` → **40 passed, 2 skipped**. Mencakup paginasi blok 100/50 baris, sort ASC+DESC, filter `eq`/`gt`, injeksi nama kolom ditolak, dan `_ensure_read_only`.
+- Go: `go build ./...` = 0, `go vet ./...` = 0, `go test -count=1 ./...` semua paket `ok` (termasuk allowlist kolom unknown → 422, known → 503 tanpa engine).
+- Web: `npm test` → **12 passed** (termasuk component test datasource AG Grid: blok 100 baris, sort diteruskan, error memanggil `failCallback`); `npm run build` = 0 (chunk lazy `DataExplorer` ±898 kB / 235 kB gzip; chunk utama ±311 kB).
+- E2E stack penuh (engine 8001 + API 8080 + Vite 5173, PostgreSQL/Redis/Mailpit nyata) via skrip ad-hoc:
+  - Alur register → OTP (dibaca dari Mailpit) → verify → workspace → upload CSV 500 baris → pipeline `ready` → query.
+  - `rows/query` mengembalikan tepat 100 baris/blok (offset 0/100/400), `total=500`; sort `amount` ASC → id `0..4`, DESC → `499..495`; filter `category=eq beta` → 125; filter `amount=gt 1000` → 214; kolom tak dikenal → **422 `EXPLORER_QUERY_INVALID`**.
+  - Latensi query server: **rata-rata ±61 ms, maks ±65 ms** per blok 100 baris (target <300 ms terpenuhi).
+  - Render headless (Chrome, 1440×900): first row ±1.2 s (dev, FCP ±1.2 s), 25 baris ter-render virtual, header menampilkan indikator tipe (`#`/`Aa`/`📅`), query 200.
+- Catatan: `favicon.ico` 404 (dev-only, `index.html` tanpa favicon) — bukan defek kode.
+
+### 11.3 Belum tercakup
+- E2E di atas memakai skrip ad-hoc di luar repo; E2E otomatis berkomitmen masuk Plan 09.
+- Ukur klik/scroll virtual penuh di browser (a11y keyboard, hover) belum diotomasi.
+- Stress upload 50 MB/20 MB dan reprocess versi tambahan ada di Plan 11; visualisasi F-10 di TASK-503.
+- Override tipe kolom FR-DS-10 masih tanpa plan penampung.
