@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"insightflow/api/internal/config"
+	"insightflow/api/internal/modules/analysis"
 	"insightflow/api/internal/modules/auth"
 	"insightflow/api/internal/modules/datasets"
 	"insightflow/api/internal/modules/jobs"
@@ -156,10 +157,14 @@ func main() {
 	reaper := jobs.NewReaper(jobs.NewRepository(q), datasetsSvc, cfg.JobStaleAfter, time.Minute)
 	purge := datasets.NewJanitor(datasets.NewRepository(pool), time.Hour)
 
+	analysisSvc := analysis.NewService(analysis.NewRepository(pool))
+	analysisQuota := analysis.NewDailyQuota(cacheClient, cfg.Env, cfg.AnalysisDailyRunsPerWorkspace)
+
 	handler := router.New(cfg, router.Deps{
 		Auth:       auth.NewHandler(cfg, authSvc, google),
 		Workspaces: workspaces.NewHandler(wsSvc),
 		Datasets:   datasets.NewHandler(datasetsSvc, engine, cfg.MaxUploadCSVBytes, cfg.MaxUploadXLSXBytes),
+		Analysis:   analysis.NewHandlerWithEngine(analysisSvc, engine, cacheClient, cfg.Env, analysisQuota),
 		Issuer:     issuer,
 		Users:      usersSvc,
 		Members:    wsSvc,

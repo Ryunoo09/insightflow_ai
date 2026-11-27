@@ -7,6 +7,7 @@ import (
 
 	"insightflow/api/internal/config"
 	"insightflow/api/internal/middleware"
+	"insightflow/api/internal/modules/analysis"
 	"insightflow/api/internal/modules/auth"
 	"insightflow/api/internal/modules/datasets"
 	"insightflow/api/internal/modules/users"
@@ -19,6 +20,7 @@ type Deps struct {
 	Auth       *auth.Handler
 	Workspaces *workspaces.Handler
 	Datasets   *datasets.Handler
+	Analysis   *analysis.Handler
 	Issuer     *token.Issuer
 	Users      *users.Service
 	Members    *workspaces.Service
@@ -71,6 +73,13 @@ func New(cfg *config.Config, deps Deps) http.Handler {
 	protected.DELETE("/datasets/:dataset_id", deps.Datasets.Delete)
 	protected.POST("/datasets/:dataset_id/reprocess", deps.Datasets.Reprocess)
 
+	// Analysis sessions require workspace membership; session detail resolves
+	// membership in-query so a foreign session id is a uniform 404.
+	protected.POST("/workspaces/:workspace_id/analysis/sessions", middleware.WorkspaceMember(deps.Members), deps.Analysis.Create)
+	protected.GET("/workspaces/:workspace_id/analysis/sessions", middleware.WorkspaceMember(deps.Members), deps.Analysis.List)
+	protected.GET("/analysis/sessions/:session_id", deps.Analysis.Get)
+	protected.POST("/analysis/sessions/:session_id/messages", deps.Analysis.SendMessage)
+
 	return r
 }
 
@@ -90,6 +99,9 @@ func configLimits(cfg *config.Config) gin.HandlerFunc {
 			},
 			"profile": gin.H{
 				"timeout_seconds": cfg.ProfileTimeoutSeconds,
+			},
+			"analysis": gin.H{
+				"daily_runs_per_workspace": cfg.AnalysisDailyRunsPerWorkspace,
 			},
 			"auth": gin.H{
 				"google_enabled": cfg.GoogleEnabled(),

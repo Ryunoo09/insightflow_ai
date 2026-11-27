@@ -46,6 +46,9 @@ type Config struct {
 	PurgeGraceDays int
 	// ProfileTimeoutSeconds is exposed through /config/limits.
 	ProfileTimeoutSeconds int
+	// AnalysisDailyRunsPerWorkspace caps LLM-backed analysis runs per workspace
+	// per calendar day (Plan 06 §6). Zero disables enforcement.
+	AnalysisDailyRunsPerWorkspace int64
 
 	DatabaseURL string
 	RedisURL    string
@@ -98,6 +101,8 @@ func Load() (*Config, error) {
 		JobStaleAfter:         envDuration("JOB_STALE_AFTER", 10*time.Minute),
 		PurgeGraceDays:        envInt("DATASET_PURGE_GRACE_DAYS", 7),
 		ProfileTimeoutSeconds: envInt("PROFILE_TIMEOUT_SECONDS", 30),
+
+		AnalysisDailyRunsPerWorkspace: envInt64("ANALYSIS_DAILY_RUNS", 200),
 
 		DatabaseURL: os.Getenv("DATABASE_URL"),
 		RedisURL:    os.Getenv("REDIS_URL"),
