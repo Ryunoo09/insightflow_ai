@@ -16,6 +16,7 @@ const (
 	devDatabaseURL   = "postgres://postgres:postgres@127.0.0.1:5432/insightflow_dev?sslmode=disable"
 	devRedisURL      = "redis://127.0.0.1:6379/0"
 	devAllowedOrigin = "http://localhost:5173"
+	devStorageRoot   = "storage"
 )
 
 // Config holds typed runtime configuration loaded from the environment.
@@ -25,6 +26,29 @@ type Config struct {
 	Port        int
 	EngineURL   string
 	EngineToken string
+
+	// StorageRoot is where dataset sources and Parquet files live. It is shared
+	// with the Python engine (must point at the same directory).
+	StorageRoot string
+
+	// Upload and dataset limits (PRD 27.4). Byte limits are hard caps.
+	MaxUploadCSVBytes       int64
+	MaxUploadXLSXBytes      int64
+	MaxDatasetRowsCSV       int64
+	MaxDatasetRowsXLSX      int64
+	MaxDatasetColumns       int
+	MaxDatasetsPerWorkspace int
+
+	// JobStaleAfter is how long a claimed job may sit in 'processing' before the
+	// reaper treats it as crashed. Must exceed the engine processing timeout.
+	JobStaleAfter time.Duration
+	// PurgeGraceDays is the soft-delete retention window before physical purge.
+	PurgeGraceDays int
+	// ProfileTimeoutSeconds is exposed through /config/limits.
+	ProfileTimeoutSeconds int
+	// AnalysisDailyRunsPerWorkspace caps LLM-backed analysis runs per workspace
+	// per calendar day (Plan 06 §6). Zero disables enforcement.
+	AnalysisDailyRunsPerWorkspace int64
 
 	DatabaseURL string
 	RedisURL    string
@@ -65,6 +89,21 @@ func Load() (*Config, error) {
 		EngineURL:   env("ENGINE_URL", "http://127.0.0.1:8000"),
 		EngineToken: env("ENGINE_INTERNAL_TOKEN", ""),
 
+		StorageRoot: env("STORAGE_ROOT", devStorageRoot),
+
+		MaxUploadCSVBytes:       envInt64("LIMIT_MAX_CSV_BYTES", 50*1024*1024),
+		MaxUploadXLSXBytes:      envInt64("LIMIT_MAX_XLSX_BYTES", 20*1024*1024),
+		MaxDatasetRowsCSV:       envInt64("LIMIT_MAX_ROWS_CSV", 1_000_000),
+		MaxDatasetRowsXLSX:      envInt64("LIMIT_MAX_ROWS_XLSX", 200_000),
+		MaxDatasetColumns:       envInt("LIMIT_MAX_COLUMNS", 200),
+		MaxDatasetsPerWorkspace: envInt("LIMIT_MAX_DATASETS", 20),
+
+		JobStaleAfter:         envDuration("JOB_STALE_AFTER", 10*time.Minute),
+		PurgeGraceDays:        envInt("DATASET_PURGE_GRACE_DAYS", 7),
+		ProfileTimeoutSeconds: envInt("PROFILE_TIMEOUT_SECONDS", 30),
+
+		AnalysisDailyRunsPerWorkspace: envInt64("ANALYSIS_DAILY_RUNS", 200),
+
 		DatabaseURL: os.Getenv("DATABASE_URL"),
 		RedisURL:    os.Getenv("REDIS_URL"),
 
@@ -100,6 +139,19 @@ func Load() (*Config, error) {
 	}
 	if cfg.OTPTTL <= 0 || cfg.OTPMaxAttempts <= 0 || cfg.OTPResendInterval <= 0 || cfg.OTPMaxSendsPerHour <= 0 {
 		return nil, fmt.Errorf("OTP limits must all be positive")
+	}
+	if cfg.MaxUploadCSVBytes <= 0 || cfg.MaxUploadXLSXBytes <= 0 ||
+		cfg.MaxDatasetRowsCSV <= 0 || cfg.MaxDatasetRowsXLSX <= 0 ||
+		cfg.MaxDatasetColumns <= 0 || cfg.MaxDatasetsPerWorkspace <= 0 {
+		return nil, fmt.Errorf("dataset limits must all be positive")
+	}
+	// The engine gives up after 300s; a shorter stale window would let the
+	// reaper steal a job that is still running.
+	if cfg.JobStaleAfter <= 5*time.Minute {
+		return nil, fmt.Errorf("JOB_STALE_AFTER must be greater than the 5m engine timeout")
+	}
+	if cfg.PurgeGraceDays <= 0 || cfg.ProfileTimeoutSeconds <= 0 {
+		return nil, fmt.Errorf("purge grace days and profile timeout must be positive")
 	}
 
 	if cfg.Env == "production" {
@@ -166,6 +218,24 @@ func envInt(key string, fallback int) int {
 	if v, ok := os.LookupEnv(key); ok && v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return fallback
+}
+
+func envInt64(key string, fallback int64) int64 {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return n
+		}
+	}
+	return fallback
+}
+
+func envDuration(key string, fallback time.Duration) time.Duration {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
 		}
 	}
 	return fallback

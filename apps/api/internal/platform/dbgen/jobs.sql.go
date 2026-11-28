@@ -18,17 +18,21 @@ SET status = 'processing',
     locked_at = now(),
     updated_at = now()
 WHERE id = (
-    SELECT id FROM processing_jobs
-    WHERE status = 'queued' AND attempts < max_attempts
-    ORDER BY created_at
+    SELECT j.id FROM processing_jobs j
+    JOIN dataset_versions v ON v.id = j.version_id
+    JOIN datasets d ON d.id = v.dataset_id
+    WHERE j.status = 'queued' AND j.attempts < j.max_attempts AND j.run_after <= now()
+      AND d.deleted_at IS NULL
+    ORDER BY j.run_after, j.created_at
     LIMIT 1
-    FOR UPDATE SKIP LOCKED
+    FOR UPDATE OF j SKIP LOCKED
 )
-RETURNING id, workspace_id, version_id, job_type, status, attempts, max_attempts, error_message, locked_at, finished_at, created_at, updated_at
+RETURNING id, workspace_id, version_id, job_type, status, attempts, max_attempts, error_message, locked_at, finished_at, created_at, updated_at, run_after
 `
 
-// Atomically claim the oldest queued job. FOR UPDATE SKIP LOCKED lets multiple
-// workers poll concurrently without double-claiming.
+// Atomically claim the oldest due job. FOR UPDATE SKIP LOCKED lets multiple
+// workers poll concurrently without double-claiming; run_after defers retries.
+// Jobs for soft-deleted datasets are never claimed.
 func (q *Queries) ClaimNextJob(ctx context.Context) (ProcessingJob, error) {
 	row := q.db.QueryRow(ctx, claimNextJob)
 	var i ProcessingJob
@@ -45,6 +49,7 @@ func (q *Queries) ClaimNextJob(ctx context.Context) (ProcessingJob, error) {
 		&i.FinishedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RunAfter,
 	)
 	return i, err
 }
@@ -52,7 +57,7 @@ func (q *Queries) ClaimNextJob(ctx context.Context) (ProcessingJob, error) {
 const enqueueJob = `-- name: EnqueueJob :one
 INSERT INTO processing_jobs (workspace_id, version_id, job_type, status)
 VALUES ($1, $2, $3, 'queued')
-RETURNING id, workspace_id, version_id, job_type, status, attempts, max_attempts, error_message, locked_at, finished_at, created_at, updated_at
+RETURNING id, workspace_id, version_id, job_type, status, attempts, max_attempts, error_message, locked_at, finished_at, created_at, updated_at, run_after
 `
 
 type EnqueueJobParams struct {
@@ -77,8 +82,192 @@ func (q *Queries) EnqueueJob(ctx context.Context, arg EnqueueJobParams) (Process
 		&i.FinishedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RunAfter,
 	)
 	return i, err
+}
+
+const failJobsForDataset = `-- name: FailJobsForDataset :exec
+UPDATE processing_jobs j
+SET status = 'failed',
+    finished_at = now(),
+    error_message = 'dataset dihapus',
+    updated_at = now()
+FROM dataset_versions v
+WHERE j.version_id = v.id
+  AND v.dataset_id = $1
+  AND j.status IN ('queued', 'processing')
+`
+
+// A soft-deleted dataset must not keep work queued; fail every open job.
+func (q *Queries) FailJobsForDataset(ctx context.Context, datasetID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, failJobsForDataset, datasetID)
+	return err
+}
+
+const failStaleJobs = `-- name: FailStaleJobs :many
+UPDATE processing_jobs
+SET status = 'failed',
+    finished_at = now(),
+    error_message = 'stale job exceeded max attempts',
+    updated_at = now()
+WHERE status = 'processing'
+  AND locked_at IS NOT NULL
+  AND locked_at < now() - make_interval(secs => $1)
+  AND attempts >= max_attempts
+RETURNING id, workspace_id, version_id, job_type, status, attempts, max_attempts, error_message, locked_at, finished_at, created_at, updated_at, run_after
+`
+
+func (q *Queries) FailStaleJobs(ctx context.Context, secs float64) ([]ProcessingJob, error) {
+	rows, err := q.db.Query(ctx, failStaleJobs, secs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ProcessingJob
+	for rows.Next() {
+		var i ProcessingJob
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.VersionID,
+			&i.JobType,
+			&i.Status,
+			&i.Attempts,
+			&i.MaxAttempts,
+			&i.ErrorMessage,
+			&i.LockedAt,
+			&i.FinishedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.RunAfter,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getLatestJobForVersion = `-- name: GetLatestJobForVersion :one
+SELECT id, workspace_id, version_id, job_type, status, attempts, max_attempts, error_message, locked_at, finished_at, created_at, updated_at, run_after FROM processing_jobs
+WHERE version_id = $1
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLatestJobForVersion(ctx context.Context, versionID pgtype.UUID) (ProcessingJob, error) {
+	row := q.db.QueryRow(ctx, getLatestJobForVersion, versionID)
+	var i ProcessingJob
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.VersionID,
+		&i.JobType,
+		&i.Status,
+		&i.Attempts,
+		&i.MaxAttempts,
+		&i.ErrorMessage,
+		&i.LockedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RunAfter,
+	)
+	return i, err
+}
+
+const requeueJob = `-- name: RequeueJob :one
+UPDATE processing_jobs
+SET status = 'queued',
+    error_message = $2,
+    run_after = now() + ($3::int * interval '1 second'),
+    locked_at = NULL,
+    updated_at = now()
+WHERE id = $1
+RETURNING id, workspace_id, version_id, job_type, status, attempts, max_attempts, error_message, locked_at, finished_at, created_at, updated_at, run_after
+`
+
+type RequeueJobParams struct {
+	ID           pgtype.UUID
+	ErrorMessage pgtype.Text
+	Column3      int32
+}
+
+// Release a claimed job back to the queue for a later attempt. run_after is
+// pushed out so retries back off instead of spinning.
+func (q *Queries) RequeueJob(ctx context.Context, arg RequeueJobParams) (ProcessingJob, error) {
+	row := q.db.QueryRow(ctx, requeueJob, arg.ID, arg.ErrorMessage, arg.Column3)
+	var i ProcessingJob
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.VersionID,
+		&i.JobType,
+		&i.Status,
+		&i.Attempts,
+		&i.MaxAttempts,
+		&i.ErrorMessage,
+		&i.LockedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RunAfter,
+	)
+	return i, err
+}
+
+const requeueStaleJobs = `-- name: RequeueStaleJobs :many
+UPDATE processing_jobs
+SET status = 'queued',
+    locked_at = NULL,
+    run_after = now(),
+    error_message = 'stale job requeued',
+    updated_at = now()
+WHERE status = 'processing'
+  AND locked_at IS NOT NULL
+  AND locked_at < now() - make_interval(secs => $1)
+  AND attempts < max_attempts
+RETURNING id, workspace_id, version_id, job_type, status, attempts, max_attempts, error_message, locked_at, finished_at, created_at, updated_at, run_after
+`
+
+// Recover jobs stranded in 'processing' after a crash: rows still under their
+// attempt budget go back to the queue. FailStaleJobs handles the exhausted ones.
+func (q *Queries) RequeueStaleJobs(ctx context.Context, secs float64) ([]ProcessingJob, error) {
+	rows, err := q.db.Query(ctx, requeueStaleJobs, secs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ProcessingJob
+	for rows.Next() {
+		var i ProcessingJob
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.VersionID,
+			&i.JobType,
+			&i.Status,
+			&i.Attempts,
+			&i.MaxAttempts,
+			&i.ErrorMessage,
+			&i.LockedAt,
+			&i.FinishedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.RunAfter,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const updateJobStatus = `-- name: UpdateJobStatus :one
@@ -88,7 +277,7 @@ SET status = $2,
     finished_at = now(),
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, version_id, job_type, status, attempts, max_attempts, error_message, locked_at, finished_at, created_at, updated_at
+RETURNING id, workspace_id, version_id, job_type, status, attempts, max_attempts, error_message, locked_at, finished_at, created_at, updated_at, run_after
 `
 
 type UpdateJobStatusParams struct {
@@ -113,6 +302,7 @@ func (q *Queries) UpdateJobStatus(ctx context.Context, arg UpdateJobStatusParams
 		&i.FinishedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RunAfter,
 	)
 	return i, err
 }

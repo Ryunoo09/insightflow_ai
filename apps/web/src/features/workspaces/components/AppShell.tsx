@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useMatch, useNavigate } from "react-router-dom";
 
 import { Button } from "../../../components/ui";
+import { cn } from "../../../lib/cn";
 import { authApi } from "../../auth/api";
 import { useAuthStore } from "../../auth/store";
 import { WorkspaceSelector } from "./WorkspaceSelector";
@@ -14,6 +15,7 @@ export function AppShell() {
   const clear = useAuthStore((s) => s.clear);
   const match = useMatch("/app/:workspaceId/*");
   const activeId = match?.params.workspaceId ?? null;
+  const explorer = useMatch("/app/:workspaceId/datasets/:datasetId/explorer");
 
   async function onLogout() {
     try {
@@ -39,13 +41,26 @@ export function AppShell() {
               onChange={(ws) => navigate(`/app/${ws.id}/overview`)}
             />
           </div>
+          {activeId && (
+            <nav className="flex items-center gap-4 text-sm font-medium">
+              <Link to={`/app/${activeId}/overview`} className="text-muted-foreground hover:text-foreground">
+                Ikhtisar
+              </Link>
+              <Link to={`/app/${activeId}/datasets`} className="text-muted-foreground hover:text-foreground">
+                Dataset
+              </Link>
+              <Link to={`/app/${activeId}/analysis`} className="text-muted-foreground hover:text-foreground">
+                Analisis
+              </Link>
+            </nav>
+          )}
           <span className="text-sm text-muted-foreground">{user?.email}</span>
           <Button variant="ghost" onClick={onLogout}>
             Keluar
           </Button>
         </div>
       </header>
-      <main className="mx-auto w-full max-w-5xl p-6">
+      <main className={cn("mx-auto w-full p-6", explorer ? "max-w-none" : "max-w-5xl")}>
         <Outlet />
       </main>
     </div>

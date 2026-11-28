@@ -49,6 +49,8 @@ flowchart TD
     P07["Plan 07: Dashboards & Visualizations<br/>(Recharts, 12-Col Grid, Widget Re-run)"]
     P08["Plan 08: Governance, Audit & Hardening<br/>(Quota, Audit Logs, Rate Limits, Sanitization)"]
     P09["Plan 09: E2E Verification & Readiness<br/>(User Journeys, Benchmarks, Deployment)"]
+    P10["Plan 10: Job Wake-up Signal<br/>(Redis signal, fail-open, additive to P04)"]
+    P11["Plan 11: Dataset Management & Hardening<br/>(Plan 04 debt: reaper, CRUD, list, config)"]
 
     P01 --> P02
     P02 --> P03
@@ -59,10 +61,19 @@ flowchart TD
     P03 --> P08
     P06 --> P07
     P06 --> P08
+    P04 --> P10
+    P04 --> P11
+    P10 --> P11
     P05 --> P09
     P07 --> P09
     P08 --> P09
+    P10 --> P09
+    P11 --> P09
 ```
+
+Plan 10 bersifat aditif dan opsional: antrean job tetap `processing_jobs` di PostgreSQL (`SKIP LOCKED`). Redis hanya mengirim sinyal bangun best-effort; bila Redis gagal, worker kembali ke polling (fail-open). Plan 04 tetap dapat diselesaikan dan dirilis tanpa Plan 10.
+
+Plan 11 melunasi utang Plan 04: reaper job macet, timeout profiling, test upload/klaim konkuren, rename/soft delete/purge, reprocess versi baru, paginasi daftar dataset, dan `/config/limits`.
 
 ---
 
@@ -100,7 +111,11 @@ Jalur kritis pengembangan aplikasi:
 | F-04, F-05 | Manajemen Workspace & Isolasi Keanggotaan | Plan 03 | TASK-304 | P0 | Planned |
 | F-06, F-07 | Upload file CSV/XLSX & Streaming SHA-256 Storage | Plan 04 | TASK-401, TASK-402 | P0 | Planned |
 | F-08, F-09 | Pemrosesan background job PostgreSQL (`SKIP LOCKED`) & parsing Parquet | Plan 04 | TASK-403, TASK-404 | P0 | Planned |
-| F-10, F-11 | Profiling kualitas dataset & visualisasi ringkasan kualitas data | Plan 04, Plan 05 | TASK-405, TASK-503 | P0 | Planned |
+| F-08, F-09 (optimasi) | Latensi pengambilan job & penghapusan polling DB saat idle | Plan 10 | TASK-1001..TASK-1004 | P2 | Planned |
+| F-10 | Profiling kualitas dataset & visualisasi ringkasan kualitas data | Plan 04, Plan 05 | TASK-405, TASK-503 | P0 | Planned |
+| F-11 | Reprocess dataset menjadi versi baru (retensi 3 versi) | Plan 11 | TASK-1106 | P1 | Planned |
+| FR-DS-06, FR-DS-08, FR-DS-11 | Paginasi/pencarian/filter daftar dataset, soft delete + purge, reprocess | Plan 11 | TASK-1105, TASK-1106, TASK-1107 | P1 | Planned |
+| F-08/F-09 (hardening) | Reaper job macet, timeout profiling, test upload & klaim konkuren | Plan 11 | TASK-1101..TASK-1104 | P0/P1 | Planned |
 | F-12, F-13 | Data Explorer dengan AG Grid Infinite Scroll & pemfilteran server-side | Plan 05 | TASK-501, TASK-502 | P1 | Planned |
 | F-14, F-15 | Sesi Analisis AI, Context Builder, dan SSE Stream Gateway | Plan 06 | TASK-601, TASK-602 | P0 | Planned |
 | F-16, F-17 | LLM Planner, Tool Registry DuckDB, dan Result Envelope Validation | Plan 06 | TASK-603, TASK-604 | P0 | Planned |
@@ -122,6 +137,7 @@ Jalur kritis pengembangan aplikasi:
 | **Kelebihan memori DuckDB / OOM pada dataset besar** | Crash pada Python Engine saat memproses file. | Sedang | Limit memori DuckDB dipin 1 GB dan 2 thread; streaming chunking saat konversi CSV/XLSX ke Parquet; batasan keras ukuran upload. |
 | **Inkonsistensi data parsial akibat ketiadaan transaksi lintas Go & Engine** | Job berstatus sukses tapi file Parquet belum terbit. | Rendah | Pemakaian status job eksplisit (`queued`, `processing`, `ready`, `failed`), penulisan atomik file sementara, dan cleanup janitor job. |
 | **Redis Ephemeral Failure (Crash/Restart)** | Kehilangan state OTP/OAuth aktif dan cache. | Sedang | Prinsip Fail-Closed untuk autentikasi OTP/OAuth (tidak menerbitkan token tanpa verifikasi); Fail-Open untuk cache hasil analisis deterministik (recompute dari DuckDB). |
+| **Polling job idle membebani PostgreSQL** | Query klaim berulang walau antrean kosong; latensi pickup hingga 2 detik. | Sedang | Plan 10: sinyal bangun Redis best-effort (TTL, tanpa payload) dengan fallback polling; antrean tetap di PostgreSQL dan fail-open saat Redis mati. |
 
 ---
 

@@ -43,8 +43,14 @@ export function OverviewPage() {
       <Card>
         <h2 className="text-lg font-semibold">Mulai analisis</h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          Belum ada dataset di ruang kerja ini. Unggah dan analisis data tersedia pada tahap berikutnya.
+          Unggah dataset CSV atau XLSX untuk mulai menganalisis data di ruang kerja ini.
         </p>
+        <Link
+          to={`/app/${workspaceId}/datasets`}
+          className="mt-3 inline-block text-sm font-medium text-primary hover:underline"
+        >
+          Kelola dataset
+        </Link>
       </Card>
     </div>
   );

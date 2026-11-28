@@ -169,7 +169,10 @@ Membangun modul perencana di Python Engine yang memetakan pertanyaan bahasa alam
    - Verifikasi bahwa tool yang diminta ada dalam registry tool terdaftar.
    - Verifikasi bahwa setiap kolom yang dirujuk dalam argumen tool benar-benar ada dalam skema Parquet.
    - Tolak rencana yang meminta eksekusi kode bebas atau query di luar allowlist.
+   - Verifikasi **kecocokan tipe**, bukan hanya nama: `sum`/`avg` hanya pada kolom numerik; `time_series_metric.group_by` wajib bertipe `date` dan `bucket` wajib terisi.
+   - Perlakukan identifier sebagai string yang harus **sama persis** dengan nama kolom schema; tolak identifier yang memuat spasi, tanda kurung, atau ekspresi SQL (mis. `date_trunc('month', created)`).
    - Jika plan invalid, picu satu kali percobaan perbaikan (repair prompt) ke LLM.
+5. Panggil LLM dengan `response_format: {"type": "json_schema", "strict": true}` yang memuat aturan kondisional (`allOf` + `if/then`: `time_series_metric` → `required: [group_by, bucket]`). Jangan menyediakan jalur `json_object` (lihat §9.1).
 
 **Expected Files:**
 - `apps/engine/app/orchestration/planner.py`
@@ -372,6 +375,39 @@ Memisahkan orkestrasi sesi Go API -> streaming gateway SSE -> Engine Planner & V
 |---|---|---|---|
 | Outage atau latensi tinggi dari provider LLM eksternal | Analisis pengguna terhenti | Sedang | Terapkan timeout ketat 30 detik, 2 kali retry transient, dan pesan error informatif jika provider tidak dapat dijangkau. |
 | Grounding Checker menolak narasi valid karena perbedaan format angka | Kegagalan narasi palsu | Sedang | Normalisasi format angka (contoh: koma desimal vs titik, penulisan "1.5 juta" vs "1500000") sebelum pencocokan. |
+| Output planner tidak deterministik walau `temperature = 0` | Run gagal di tengah jalan, biaya panggilan naik | Tinggi (terukur) | Validator ketat + satu repair retry (§9.1 aturan 4); catat jumlah retry ke `analysis_runs`. |
+| Model mengirim ekspresi SQL di field identifier | Injeksi identifier ke query DuckDB | Sedang (terukur) | Identifier harus match persis nama kolom schema + regex `^[A-Za-z0-9_.-]+$` (§9.1 aturan 4). |
+| Plan bentuk-valid tapi makna salah (mis. "profit" dipetakan ke `amount`) | Angka benar secara komputasi, salah secara bisnis | Tinggi | `PlanPanel` wajib menampilkan plan ke pengguna; narasi tidak boleh jadi satu-satunya sumber. |
+| WAF provider memblokir prompt berisi keyword SQL destruktif | Pertanyaan pengguna ditolak sebelum sampai ke model | Rendah | Engine wajib menangani body non-JSON (`text/html`) dan memetakan 403 ke `LLM_REQUEST_BLOCKED`, bukan 500 (§9.1 aturan 5). |
+| Kuota provider tidak terbaca lewat API | Kehabisan kuota muncul sebagai error samar | Sedang | Jangan bergantung pada endpoint kuota provider; pakai kuota harian internal di Redis (Scope §1.2) sebagai sumber kebenaran. |
+| Latensi p95 tinggi pada panggilan pembuka (cold start) | UI terasa hang | Sedang | Semua tahapan wajib di-stream lewat SSE `stage_start`; jangan menunggu narasi selesai baru render. |
+
+### 9.1 Hasil Uji Provider LLM (pra-implementasi)
+
+Uji dijalankan sebelum TASK-603 ditulis, memakai skema `AnalysisPlan` minimal
+(`tool`, `column`, `aggregation`, `group_by?`, `bucket?`) dan lima kasus: pertanyaan lugas
+(Indonesia), pertanyaan ambigu, schema lebar 22 kolom (time series), kolom yang tidak ada
+(`profit`), dan percobaan injeksi SQL. Skrip probe bersifat ad-hoc di luar repo
+(`llm-plan-probe.mjs`, `llm-schema-probe.mjs`); hasilnya dicatat di sini, bukan di-commit.
+
+| Provider / model | `json_schema` strict | `json_object` | Catatan |
+|---|---|---|---|
+| OpenRouter `perplexity/pplx-decider-v1.3:free` | 0/3 — HTTP 400 | 0/3 | Model "decisions", menolak endpoint `chat/completions`. Tidak dapat dipakai. |
+| OpenRouter `nvidia/nemotron-3.5-super-vl:free` | 4/5 | 0/5 | Membocorkan SQL ke identifier (`group_by: "date_trunc('month', created)"`), `sum` pada kolom teks. |
+| Sumopod `deepseek-v4.1-flash-1017` | 4/5 | 0/5 | Plan bersih, tetapi `time_series_metric` menghilangkan `group_by` bila skema tidak kondisional. |
+| Sumopod `claude-haiku-5-5` | 4/5 | 0/5 | Paling bersih dan tercepat (median ±2.2 s, p95 ±7.0 s). Satu kegagalan: `time_series_metric.group_by` = kolom teks. |
+
+Kegagalan yang bukan disebabkan model (berlaku semua provider):
+- `json_object` tidak pernah mematuhi enum: `tool` keluar sebagai `aggregate`, `query`, atau `sql`.
+- Prompt berisi keyword SQL destruktif (`DROP TABLE`) dijawab **HTTP 403 Cloudflare** dengan body HTML, bukan JSON.
+
+Aturan yang mengikat TASK-603 karena hasil uji ini:
+1. Hanya `response_format: json_schema` + `strict: true`; tidak ada fallback `json_object`.
+2. Skema wajib memakai aturan kondisional: `time_series_metric` → `required: [group_by, bucket]`. Field `time_column` tidak dipakai karena memicu kolom karangan.
+3. Field `bucket` wajib berupa enum (`day`, `week`, `month`, `quarter`, `year`); model tidak boleh menyusun nama kolom turunan seperti `created_monthly`.
+4. Validator menolak plan yang gagal kecocokan nama/tipe, lalu retry perbaikan **tepat satu kali**. Rata-rata ±17% run butuh retry pada model terbaik.
+5. Respons non-2xx berbody HTML diperlakukan sebagai kegagalan provider (`LLM_REQUEST_BLOCKED` / `LLM_UNAVAILABLE`), tidak boleh diparse sebagai JSON dan tidak boleh menjadi 500 dengan stack trace.
+6. Default pengembangan: `claude-haiku-5-5`; pembanding: `deepseek-v4.1-flash-1017`. Sebelum rilis, satu model berbayar stabil harus lolos probe yang sama.
 
 ---
 
@@ -379,7 +415,48 @@ Memisahkan orkestrasi sesi Go API -> streaming gateway SSE -> Engine Planner & V
 
 - [ ] Sesi analisis dapat dibuat dan riwayat pesan tersimpan di database.
 - [ ] LLM Planner menghasilkan rencana terstruktur yang tervalidasi secara semantik.
+- [ ] `PlanValidator` menolak plan dengan kolom/tool di luar allowlist, agregasi yang tidak sesuai tipe kolom, dan `time_series_metric` tanpa `group_by` bertipe date + `bucket`; retry perbaikan maksimal satu kali.
 - [ ] Tool DuckDB mengeksekusi kalkulasi deterministik terhadap file Parquet tanpa kesalahan matematika.
 - [ ] Grounding Checker berhasil mendeteksi dan mencegah narasi angka halusinasi.
 - [ ] Aliran event SSE terkirim secara stabil dan mulus ke antarmuka web klien.
+- [ ] Kegagalan provider LLM (timeout, 4xx berbody HTML/WAF, kuota habis) menghasilkan error terkontrol tanpa stack trace ke klien.
 - [ ] Seluruh unit dan integration test AI loop analitik lulus 100%.
+
+---
+
+## 11. As-Built Notes
+
+> Status tetap `Planned` mengikuti konvensi repo (plan 01–11 tidak di-flip ke Done);
+> kemajuan dilacak di commit history dan `00-roadmap.md`. Bagian ini mencatat
+> realisasi implementasi + bukti verifikasi agar isi plan cocok dengan kode.
+
+### 11.1 Deviations dari spesifikasi
+| Spec | As-built | Alasan |
+|---|---|---|
+| `orchestration/plan_validator.py` memuat konstanta + prompt + `plan_question` | `plan_validator.py` validator murni; planner dipisah ke `orchestration/planner.py` | Satu modul = satu tanggung jawab; validator bisa diuji tanpa LLM. |
+| Schema plan/result/chart dalam satu modul | `schemas/plan.py`, `schemas/result.py`, `schemas/chart.py` | Batas kontrak jelas dan import tidak melingkar. |
+| `POST /v1/ai/analyze` mengembalikan plan + hasil | Sama, ditambah field `usage` (`prompt_tokens`, `completion_tokens`, `calls`) di frame `run_completed` | Go menyimpan biaya token per run di `analysis_runs`. |
+| Kuota harian "diverifikasi" (tanpa mekanisme) | Counter Redis `quota:analysis:{workspace}:{yyyymmdd}` (TTL sampai akhir hari UTC), cek sebelum run dibuat | Satu-satunya batas biaya yang tidak bergantung API provider. Redis gagal → fail-open. |
+| Route UI hanya `/app/:workspaceId/analysis/:sessionId` | Ditambah `/app/:workspaceId/analysis` (daftar sesi) + `GET /workspaces/:id/analysis/sessions` | Tanpa daftar, sesi lama tidak bisa dibuka kembali. |
+| Risk §9 "catat jumlah retry ke `analysis_runs`" | `repair_attempts` dikirim di frame `plan_generated` dan ditampilkan di `PlanPanel`, tetapi **tidak** ada kolom khusus di `analysis_runs` | Menghindari migrasi kolom; nilai tetap tersedia ke klien. |
+| Chart dirender library | SVG inline deterministik (`bar`/`line`/`scatter`/`pie` + tabel bukti) | Tidak menambah dependency; bentuk chart sudah dipilih engine. |
+| Tombol "Simpan ke Dashboard" | Dirender nonaktif (`Tersedia pada plan dashboard`) | Persistensi dashboard di luar scope Plan 06. |
+| `PlanValidator` juga menolak `sum`/`avg` pada kolom non-numerik | Ditambahkan (`TOOL_TYPE_MISMATCH` di validator + tool) | Temuan probe: model memilih agregasi numerik pada kolom teks. |
+| Identifier harus match schema + regex | Tool mencocokkan nama ke skema Parquet dan mengutipnya; nilai selalu parameter terikat | Tidak ada teks model yang menjadi SQL. |
+
+### 11.2 Bukti verifikasi (lokal, Windows)
+- Engine: `pytest` → **93 passed, 2 skipped**. Mencakup skema plan, validator semantik, `planner.py` (JSON schema + tepat satu repair), 5 tool DuckDB, grounding checker, `choose_chart`, dan pipeline SSE dengan fake LLM.
+- Go: `go build ./...` = 0, `go vet ./...` = 0, `go test -count=1 ./...` semua paket `ok`. Mencakup 6 test context builder, 5 test service DB nyata, 7 test SSE/lock/relay, quota (2 test Redis + 1 test handler 429), dan parser stream engine (3 test).
+- Web: `npm test` → **19 passed** (SSE parser lintas chunk, mapping event, streaming end-to-end dengan `ReadableStream` mock, error 429); `npm run build` = 0.
+- E2E live engine (provider nyata `claude-haiku-5-5`, Parquet 20 baris): urutan frame `stage_start → plan_generated → stage_start → tool_executed → stage_start → narrative_chunk×N → chart_ready → run_completed`; `grounded=true`, `chart=bar`, `usage={prompt_tokens:2855, completion_tokens:1091, calls:3}`.
+- E2E live stack penuh (API 8080 + engine 8000 + PostgreSQL/Redis/Mailpit nyata), register → OTP dari Mailpit → verify → membership → buat sesi → tanya:
+  - Frame: `stage_start → plan_generated → stage_start → tool_executed → stage_start → narrative_chunk×4 → chart_ready → run_completed`.
+  - Persistensi: `analysis_messages` = `user` + `assistant`; `analysis_runs.status=completed`, `prompt_tokens=1999`, `completion_tokens=401`; `analysis_results` = 1 baris.
+  - `GET /api/v1/config/limits` memuat `analysis.daily_runs_per_workspace`.
+
+### 11.3 Belum tercakup
+- Lock konkurensi & kuota diuji pada level handler, bukan dua stream HTTP paralel di E2E.
+- Sifat incremental flush dibuktikan lewat `curl -N` dan test relay; belum ada tes timing browser.
+- a11y `aria-live` belum diuji dengan screen reader otomatis.
+- Tombol "Simpan ke Dashboard" dan persistensi dashboard menunggu plan dashboard.
+- Stress/kuota provider berbayar dan pemilihan model rilis dilakukan sebelum produksi (§9.1 aturan 6).

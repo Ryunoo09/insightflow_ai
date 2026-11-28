@@ -4,6 +4,7 @@ package pgconv
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -44,6 +45,14 @@ func Time(t pgtype.Timestamptz) time.Time {
 		return time.Time{}
 	}
 	return t.Time
+}
+
+// Numeric converts a float to a pgtype.Numeric. The value is rendered as a
+// decimal string because pgtype.Numeric does not scan float64 directly.
+func Numeric(f float64) pgtype.Numeric {
+	var n pgtype.Numeric
+	_ = n.Scan(strconv.FormatFloat(f, 'f', -1, 64))
+	return n
 }
 
 // IsUniqueViolation reports whether err is a PostgreSQL unique-constraint
